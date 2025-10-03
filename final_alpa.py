@@ -151,7 +151,6 @@ def cruzar_e_salvar(dtb: pd.DataFrame, alpa: pd.DataFrame, saida_dir: str | None
 
     return codificados, nao_encontrados
 
-
 # =========================================================
 # 5) Execução
 # =========================================================
@@ -162,17 +161,17 @@ if __name__ == "__main__":
     print("Lendo abas do arquivo Alpargatas…")
     alpa = carrega_alpargatas(ARQ_ALP)
 
-    # >>> ajuste CAMPINA GRANDE aqui
-    mask = (codificados["MUNICIPIO_NOME_ALP"].str.contains("CAMPINA GRANDE", case=False, na=False)) & \
-           (codificados["UF_SIGLA"] == "PB") & \
-           (codificados["MUNICIPIO_CODIGO"].isna())
+    print("Cruzando bases em memória…")
+    codificados, nao_encontrados = cruzar_e_salvar(dtb, alpa)
+
+    # >>> ajuste CAMPINA GRANDE
+    mask = (
+        (codificados["MUNICIPIO_NOME_ALP"].str.contains("CAMPINA GRANDE", case=False, na=False)) &
+        (codificados["UF_SIGLA"] == "PB") &
+        (codificados["MUNICIPIO_CODIGO"].isna())
+    )
     codificados.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
     codificados = codificados.drop(columns=["MUNICIPIO_NOME_IBGE"], errors="ignore")
-
-
-codificados.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
-remover = ["MUNICIPIO_NOME_IBGE"]
-codificados = codificados.drop(columns=remover, errors="ignore")
 
 ods_iniciais = "dados/divulgacao_anos_iniciais_municipios_2023.xlsx"
 ods_finais = "dados/divulgacao_anos_finais_municipios_2023.xlsx"
@@ -1320,6 +1319,7 @@ with tab_diag:
     _diag(df_static_ready, "df_static_ready")
     _diag(evo_safe, "evolucao_filtrada")
     _diag(urg_safe, "urgentes")
+
 
 
 
