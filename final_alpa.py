@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 # ============================
 # 0) AJUSTE OS CAMINHOS AQUI
 # ============================
-ARQ_ALP = "dados/Projetos_de_Atuac807a771o_-_IA_-_2020_a_2025 (1).xlsx"
-ARQ_DTB = "dados/RELATORIO_DTB_BRASIL_2024_MUNICIPIOS.ods"
+ARQ_ALP = "dados/Dados_alpa.xlsx"
+ARQ_DTB = "dados/dtb_municipios.ods"
 
 # =========================================================
 # 1) Utilitários curtos
@@ -173,9 +173,9 @@ if __name__ == "__main__":
     codificados.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
     codificados = codificados.drop(columns=["MUNICIPIO_NOME_IBGE"], errors="ignore")
 
-ods_iniciais = "dados/divulgacao_anos_iniciais_municipios_2023.xlsx"
-ods_finais = "dados/divulgacao_anos_finais_municipios_2023.xlsx"
-ods_em = "dados/divulgacao_ensino_medio_municipios_2023.xlsx"
+ods_iniciais = "dados/anos_iniciais.xlsx"
+ods_finais = "dados/anos_finais.xlsx"
+ods_em = "dados/ensino_medio.xlsx"
 
 df_iniciais = pd.read_excel(ods_iniciais, header= 9)
 df_finais = pd.read_excel(ods_finais, header = 9)
@@ -334,7 +334,7 @@ tabela_uf = (
     .sort_values("TAXA_APROVACAO_INICIAIS_%", ascending=False)
 )
 
-caminho_evasao = "dados/TX_TRANSICAO_MUNICIPIOS_2021_2022.ods"
+caminho_evasao = "dados/evasao.ods"
 df_evasao = pd.read_excel(caminho_evasao, header = 8)
 
 # selecionar apenas as colunas que você quer
@@ -1340,6 +1340,7 @@ with tab_diag:
     _diag(df_static_ready, "df_static_ready")
     _diag(evo_safe, "evolucao_filtrada")
     _diag(urg_safe, "urgentes")
+
 
 
 
