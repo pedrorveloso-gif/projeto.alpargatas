@@ -167,7 +167,7 @@ if __name__ == "__main__":
     alpa = carrega_alpargatas(ARQ_ALP)
 
     print("Cruzando e salvando…")
-    codificados, nao_encontrados = cruzar_e_salvar(dtb, alpa, SAIDA_DIR)
+    codificados, nao_encontrados = cruzar_e_salvar(dtb, alpa)
 
     # Visão rápida (opcional)
     print("\nAmostra codificados:")
@@ -1328,6 +1328,7 @@ with tab_diag:
     _diag(df_static_ready, "df_static_ready")
     _diag(evo_safe, "evolucao_filtrada")
     _diag(urg_safe, "urgentes")
+
 
 
 
