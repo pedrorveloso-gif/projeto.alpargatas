@@ -1,9 +1,6 @@
-# final_alpa.py
-# Baseado no seu código "que rodou liso", com:
-# - Médias históricas (todos os anos ≠ mais recente) por município
-# - Evasão (fundamental e médio) e cálculo de Urgência
-# - KPIs e gráficos adicionais (comparativo Atual x Histórico e Top Urgência)
 
+
+    # final_alpa.py
 import os, re, unicodedata
 import pandas as pd
 import plotly.express as px
@@ -13,7 +10,7 @@ import streamlit as st
 ARQ_INICIAIS = "dados/anos_iniciais.xlsx"
 ARQ_FINAIS   = "dados/anos_finais.xlsx"
 ARQ_MEDIO    = "dados/ensino_medio.xlsx"
-ARQ_EVASAO   = "dados/evasao.ods"   # lido se existir
+ARQ_EVASAO   = "dados/evasao.ods"   # não usado nas métricas, só checagem
 
 # ---------------- Cidades alvo (sem Mixing Center) ----------------
 CIDADES_ALP = [
@@ -86,13 +83,15 @@ def mapear_colunas_indicadores(df):
     mapping = {}
     for col in df.columns:
         s = nrm(col)
+        # precisa ter um ano
         m = re.search(r"(\d{4})", s)
-        if not m:
+        if not m: 
             continue
         ano = int(m.group(1))
-        if 2000 <= ano <= 2100 and (
-            ("APROV" in s) or ("INDICADOR" in s and "REND" in s) or s.startswith("VL_INDICADOR_REND_")
-        ):
+        if ano < 2000 or ano > 2100:
+            continue
+        # critérios de conteúdo
+        if ("APROV" in s) or ("INDICADOR" in s and "REND" in s) or s.startswith("VL_INDICADOR_REND_"):
             mapping[ano] = col
     return mapping
 
@@ -116,7 +115,6 @@ def encontrar_col_indicador_mais_recente(df):
     return mapping[ano], ano, mapping
 
 def media_por_municipio(df, rotulo):
-    """Média do ano mais recente por município (proporção 0–1)."""
     col, ano, _ = encontrar_col_indicador_mais_recente(df)
     vals = to_num(df[col])
     out = (pd.DataFrame({"CO_MUNICIPIO": df["CO_MUNICIPIO"], rotulo: vals})
@@ -124,26 +122,13 @@ def media_por_municipio(df, rotulo):
              .mean())
     return out, ano
 
-def media_historica_menos_recente(df, rotulo_hist):
-    """Média histórica (todos os anos ≠ mais recente) por município (proporção 0–1)."""
-    _, ano_recente, mapping = encontrar_col_indicador_mais_recente(df)
-    cols_hist = [c for a,c in mapping.items() if a != ano_recente]
-    if not cols_hist:
-        # se só existir o ano mais recente, usa o próprio (fallback)
-        cols_hist = [mapping[ano_recente]]
-    tmp = df[["CO_MUNICIPIO"] + cols_hist].copy()
-    for c in cols_hist:
-        tmp[c] = to_num(tmp[c])
-    tmp[rotulo_hist] = tmp[cols_hist].mean(axis=1)   # NaNs ignorados por padrão
-    out = tmp.groupby("CO_MUNICIPIO", as_index=False)[rotulo_hist].mean()
-    return out
-
 def evolucao_long(df):
     """wide -> long (CO_MUNICIPIO, ANO, VALOR) usando mapeamento robusto."""
     _, _, mapping = encontrar_col_indicador_mais_recente(df)
     if not mapping:
         return pd.DataFrame(columns=["CO_MUNICIPIO","ANO","VALOR"])
     tmp = df[["CO_MUNICIPIO"] + list(mapping.values())].copy()
+    # renomeia colunas p/ padronizar
     ren = {orig: f"VALOR_{ano}" for ano, orig in mapping.items()}
     tmp = tmp.rename(columns=ren)
     valor_cols = [c for c in tmp.columns if c.startswith("VALOR_")]
@@ -155,47 +140,6 @@ def evolucao_long(df):
     long = long.drop(columns=["COL"])
     return long
 
-# --------- evasão ---------
-def ler_evasao(path):
-    """
-    Lê evasão (.ods). Esperado:
-      - CO_MUNICIPIO, NO_MUNICIPIO/UF e colunas '1_CAT3_CATFUN' (Fund) e '1_CAT3_CATMED' (Médio) em %.
-    """
-    if not os.path.exists(path):
-        return pd.DataFrame(columns=["CO_MUNICIPIO","NO_MUNICIPIO","NO_UF",
-                                     "Evasao_Fundamental","Evasao_Medio"])
-    df = pd.read_excel(path, engine="odf", header=8)
-    # localizar colunas essenciais
-    def _find(df, cands):
-        cands_norm = {nrm(c) for c in cands}
-        for c in df.columns:
-            if nrm(c) in cands_norm:
-                return c
-        return None
-    col_cod  = _find(df, ["CO MUNICIPIO","CO_MUNICIPIO","CODIGO DO MUNICIPIO"])
-    col_nome = _find(df, ["NO MUNICIPIO","NO_MUNICIPIO"])
-    col_uf   = _find(df, ["NO UF","NO_UF","UF"])
-    col_fun  = _find(df, ["1_CAT3_CATFUN"])
-    col_med  = _find(df, ["1_CAT3_CATMED"])
-
-    req = [col_cod, col_nome, col_uf, col_fun, col_med]
-    if any(x is None for x in req):
-        # volta vazio mas com colunas padrão
-        return pd.DataFrame(columns=["CO_MUNICIPIO","NO_MUNICIPIO","NO_UF",
-                                     "Evasao_Fundamental","Evasao_Medio"])
-
-    out = df[[col_cod, col_nome, col_uf, col_fun, col_med]].copy()
-    out.columns = ["CO_MUNICIPIO","NO_MUNICIPIO","NO_UF","Evasao_Fundamental","Evasao_Medio"]
-    out["CO_MUNICIPIO"] = (
-        out["CO_MUNICIPIO"].astype(str).str.extract(r"(\d{7})", expand=False).str.zfill(7)
-    )
-    for c in ["Evasao_Fundamental","Evasao_Medio"]:
-        out[c] = (out[c].astype(str).str.replace("%","",regex=False).str.replace(",",".",regex=False))
-        out[c] = pd.to_numeric(out[c], errors="coerce")  # em %
-    # normalização p/ filtro por nome, se precisarmos
-    out["NORM_MUN"] = out["NO_MUNICIPIO"].apply(nrm)
-    return out
-
 # ---------------- App ----------------
 st.set_page_config(page_title="Instituto Alpargatas — Painel Municípios", layout="wide")
 st.title("📊 Instituto Alpargatas — Painel Municípios (sem Dados_alpa)")
@@ -203,14 +147,10 @@ st.title("📊 Instituto Alpargatas — Painel Municípios (sem Dados_alpa)")
 with st.expander("📁 Arquivos esperados em `dados/`", expanded=False):
     for p in [ARQ_INICIAIS, ARQ_FINAIS, ARQ_MEDIO, ARQ_EVASAO]:
         st.write(("✅" if os.path.exists(p) else "❌"), p)
-    try:
-        st.code("\n".join(os.listdir("dados")), language="text")
-    except Exception:
-        st.info("Pasta `dados/` não encontrada no diretório atual.")
+    st.code("\n".join(os.listdir("dados")), language="text")
 
 @st.cache_data(show_spinner=True)
 def build_data():
-    # ---- leitura INEP
     df_ini = ler_planilha_inep(ARQ_INICIAIS)
     df_fin = ler_planilha_inep(ARQ_FINAIS)
     df_med = ler_planilha_inep(ARQ_MEDIO)
@@ -222,57 +162,20 @@ def build_data():
             .drop_duplicates())
     base = base[base["NORM_MUN"].isin(CIDADES_NORM)].copy()
 
-    # ---- médias (ano mais recente) por etapa
-    ini_cur, ano_ini = media_por_municipio(df_ini, "TAXA_APROVACAO_INICIAIS")
-    fin_cur, ano_fin = media_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS")
-    med_cur, ano_med = media_por_municipio(df_med, "TAXA_APROVACAO_MEDIO")
+    # Médias (ano mais recente de cada arquivo)
+    ini, ano_ini = media_por_municipio(df_ini, "TAXA_APROVACAO_INICIAIS")
+    fin, ano_fin = media_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS")
+    med, ano_med = media_por_municipio(df_med, "TAXA_APROVACAO_MEDIO")
 
-    # ---- médias históricas (todos os anos ≠ mais recente) por etapa
-    ini_hist = media_historica_menos_recente(df_ini, "TAXA_APROVACAO_INICIAIS_HIST")
-    fin_hist = media_historica_menos_recente(df_fin, "TAXA_APROVACAO_FINAIS_HIST")
-    med_hist = media_historica_menos_recente(df_med, "TAXA_APROVACAO_MEDIO_HIST")
+    base = (base.merge(ini, on="CO_MUNICIPIO", how="left")
+                 .merge(fin, on="CO_MUNICIPIO", how="left")
+                 .merge(med, on="CO_MUNICIPIO", how="left"))
 
-    base = (base.merge(ini_cur, on="CO_MUNICIPIO", how="left")
-                 .merge(fin_cur, on="CO_MUNICIPIO", how="left")
-                 .merge(med_cur, on="CO_MUNICIPIO", how="left")
-                 .merge(ini_hist, on="CO_MUNICIPIO", how="left")
-                 .merge(fin_hist, on="CO_MUNICIPIO", how="left")
-                 .merge(med_hist, on="CO_MUNICIPIO", how="left"))
-
-    # percentuais
-    for c in ["TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS","TAXA_APROVACAO_MEDIO",
-              "TAXA_APROVACAO_INICIAIS_HIST","TAXA_APROVACAO_FINAIS_HIST","TAXA_APROVACAO_MEDIO_HIST"]:
+    for c in ["TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS","TAXA_APROVACAO_MEDIO"]:
         if c in base.columns:
             base[c + "_%"] = (base[c]*100).round(2)
 
-    # médias gerais (atual e histórica)
-    base["APROVACAO_MEDIA_ATUAL_%"] = base[
-        ["TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%"]
-    ].mean(axis=1)
-
-    base["APROVACAO_MEDIA_HIST_%"] = base[
-        ["TAXA_APROVACAO_INICIAIS_HIST_%","TAXA_APROVACAO_FINAIS_HIST_%","TAXA_APROVACAO_MEDIO_HIST_%"]
-    ].mean(axis=1)
-
-    # ---- Evasão
-    ev = ler_evasao(ARQ_EVASAO)
-    if not ev.empty:
-        base = base.merge(ev[["CO_MUNICIPIO","NO_MUNICIPIO","NO_UF",
-                              "Evasao_Fundamental","Evasao_Medio"]],
-                          on="CO_MUNICIPIO", how="left")
-
-    # Reprovação (em %) a partir dos % atuais
-    base["Reprovacao_Iniciais_%"] = (100 - base["TAXA_APROVACAO_INICIAIS_%"]).clip(lower=0)
-    base["Reprovacao_Finais_%"]   = (100 - base["TAXA_APROVACAO_FINAIS_%"]).clip(lower=0)
-    base["Reprovacao_Medio_%"]    = (100 - base["TAXA_APROVACAO_MEDIO_%"]).clip(lower=0)
-
-    # Urgência (soma simples — pode ser ajustada depois)
-    base["Urgencia"] = (
-        base[["Evasao_Fundamental","Evasao_Medio","Reprovacao_Iniciais_%","Reprovacao_Finais_%"]]
-        .sum(axis=1, skipna=True)
-    )
-
-    # ---- Evolução (apenas municípios filtrados)
+    # Evolução (apenas municípios filtrados)
     long_ini = evolucao_long(df_ini)
     long_fin = evolucao_long(df_fin)
     long_med = evolucao_long(df_med)
@@ -299,42 +202,25 @@ with st.spinner("Carregando e processando…"):
 # ---------------- KPIs ----------------
 c1,c2,c3,c4 = st.columns(4)
 with c1: st.metric("Municípios filtrados", f"{base['CO_MUNICIPIO'].nunique()}")
-with c2: st.metric("Aprovação média — atual (%)", f"{base['APROVACAO_MEDIA_ATUAL_%'].mean():.2f}")
-with c3: st.metric("Aprovação média — histórica (%)", f"{base['APROVACAO_MEDIA_HIST_%'].mean():.2f}")
-with c4: st.metric("Urgência média", f"{base['Urgencia'].mean():.2f}")
+with c2: st.metric("Ano (Iniciais)", meta["ANO_INI"])
+with c3: st.metric("Ano (Finais)",   meta["ANO_FIN"])
+with c4: st.metric("Ano (Médio)",    meta["ANO_MED"])
 
 # ---------------- Tabela ----------------
-st.markdown("### 📋 Taxas — atual e histórica (%)")
-cols_show = [
-    "NO_UF","NO_MUNICIPIO",
-    "TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%",
-    "TAXA_APROVACAO_INICIAIS_HIST_%","TAXA_APROVACAO_FINAIS_HIST_%","TAXA_APROVACAO_MEDIO_HIST_%",
-    "APROVACAO_MEDIA_ATUAL_%","APROVACAO_MEDIA_HIST_%",
-    "Evasao_Fundamental","Evasao_Medio",
-    "Reprovacao_Iniciais_%","Reprovacao_Finais_%","Reprovacao_Medio_%",
-    "Urgencia"
-]
-cols_show = [c for c in cols_show if c in base.columns]
+st.markdown("### 📋 Taxas mais recentes (%)")
+cols_show = ["NO_UF","NO_MUNICIPIO",
+             "TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%"]
 st.dataframe(
     base[cols_show].sort_values(["NO_UF","NO_MUNICIPIO"]).reset_index(drop=True),
     use_container_width=True
 )
 
-# ---------------- Gráfico: comparativo Atual x Histórico ----------------
-st.markdown("### 📊 Comparativo Atual × Histórico por etapa")
-etapa = st.radio("Etapa", ["Iniciais","Finais","Médio"], horizontal=True)
-map_atual = {"Iniciais":"TAXA_APROVACAO_INICIAIS_%", "Finais":"TAXA_APROVACAO_FINAIS_%", "Médio":"TAXA_APROVACAO_MEDIO_%"}
-map_hist  = {"Iniciais":"TAXA_APROVACAO_INICIAIS_HIST_%", "Finais":"TAXA_APROVACAO_FINAIS_HIST_%", "Médio":"TAXA_APROVACAO_MEDIO_HIST_%"}
-c_atual, c_hist = map_atual[etapa], map_hist[etapa]
-viz = (base[["NO_MUNICIPIO", c_atual, c_hist]]
-       .dropna(subset=[c_atual, c_hist])
-       .melt(id_vars="NO_MUNICIPIO", var_name="Tipo", value_name="Valor")
-       .replace({c_atual: f"{etapa} — Atual", c_hist: f"{etapa} — Histórico"}))
-st.plotly_chart(
-    px.bar(viz, x="NO_MUNICIPIO", y="Valor", color="Tipo", barmode="group",
-           labels={"NO_MUNICIPIO":"Município","Valor":"%","Tipo":""}),
-    use_container_width=True
-)
+# ---------------- Gráfico barras ----------------
+st.markdown("### 📊 Aprovação (Iniciais) — %")
+tmp = base.sort_values("TAXA_APROVACAO_INICIAIS_%", ascending=False)
+fig = px.bar(tmp, x="NO_MUNICIPIO", y="TAXA_APROVACAO_INICIAIS_%", color="NO_UF",
+             labels={"NO_MUNICIPIO":"Município","TAXA_APROVACAO_INICIAIS_%":"Iniciais (%)","NO_UF":"UF"})
+st.plotly_chart(fig, use_container_width=True)
 
 # ---------------- Evolução ----------------
 st.markdown("### 📈 Evolução por município")
@@ -349,23 +235,11 @@ else:
     e2["Etapa"] = (e2["Etapa"].str.replace("_%","", regex=False)
                              .str.replace("APROVACAO_","", regex=False)
                              .str.title())
-    st.plotly_chart(px.line(e2, x="ANO", y="Aprovação (%)", color="Etapa", markers=True),
-                    use_container_width=True)
-
-# ---------------- Top Urgência ----------------
-st.markdown("### 🚨 Top Urgência (maior = pior)")
-topn = st.slider("Quantos municípios exibir", 5, 30, 15, 1)
-rank_urg = (base[["NO_UF","NO_MUNICIPIO","Urgencia"]]
-            .dropna(subset=["Urgencia"])
-            .sort_values("Urgencia", ascending=False)
-            .head(topn))
-st.plotly_chart(
-    px.bar(rank_urg, x="NO_MUNICIPIO", y="Urgencia", color="NO_UF"),
-    use_container_width=True
-)
+    fig2 = px.line(e2, x="ANO", y="Aprovação (%)", color="Etapa", markers=True)
+    st.plotly_chart(fig2, use_container_width=True)
 
 # ---------------- Debug opcional ----------------
-with st.expander("🔎 Debug: anos/colunas reconhecidas"):
+with st.expander("🔎 Debug: colunas de indicadores reconhecidas"):
     for nome, caminho in [("Iniciais", ARQ_INICIAIS), ("Finais", ARQ_FINAIS), ("Médio", ARQ_MEDIO)]:
         try:
             df = pd.read_excel(caminho, header=achar_header(caminho))
