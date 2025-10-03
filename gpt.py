@@ -198,8 +198,6 @@ res["TAXA_APROVACAO_INICIAIS"]   = pd.to_numeric(res.get("TAXA_APROVACAO_INICIAI
 res.at[1, "TAXA_APROVACAO_INICIAIS_%"] = 90.66
 res.at[1, "TAXA_APROVACAO_INICIAIS"]   = 0.9066
 
-res.loc[1, "TAXA_APROVACAO_INICIAIS_%"] = "90.66"
-res.loc[1, "TAXA_APROVACAO_INICIAIS"]  = "0.9066"
 for col in ["TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%"]:
     res[col] = pd.to_numeric(res[col], errors="coerce")
 
