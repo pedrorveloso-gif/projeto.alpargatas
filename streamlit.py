@@ -17,7 +17,7 @@ st.caption("Análise de dados de aprovação, evasão e urgência educacional.")
 # ============================
 # ERRO CORRIGIDO: ARQ_ALP precisa ser definido
 ARQ_ALP = "dados/Dados_alpa.xlsx"
-ARQ_DTB = "dados/dtb_municipios.xlsx" 
+ARQ_DTB = "dados/dtb_municipios.ods" 
 ODS_INICIAIS = "dados/anos_iniciais.xlsx" 
 ODS_FINAIS = "dados/anos_finais.xlsx" 
 ODS_EM = "dados/ensino_medio.xlsx" 
