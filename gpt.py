@@ -191,6 +191,13 @@ res = (res.drop(columns=["TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS","TAXA
           .drop(index=5, errors="ignore"))
 res = res.rename(columns=lambda x: x.replace("_P", "") if x.endswith("_P") else x)
 res = res.iloc[:18]
+# garantir dtype numérico antes de setar valores
+res["TAXA_APROVACAO_INICIAIS_%"] = pd.to_numeric(res.get("TAXA_APROVACAO_INICIAIS_%"), errors="coerce")
+res["TAXA_APROVACAO_INICIAIS"]   = pd.to_numeric(res.get("TAXA_APROVACAO_INICIAIS"),   errors="coerce")
+
+res.at[1, "TAXA_APROVACAO_INICIAIS_%"] = 90.66
+res.at[1, "TAXA_APROVACAO_INICIAIS"]   = 0.9066
+
 res.loc[1, "TAXA_APROVACAO_INICIAIS_%"] = "90.66"
 res.loc[1, "TAXA_APROVACAO_INICIAIS"]  = "0.9066"
 for col in ["TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%"]:
