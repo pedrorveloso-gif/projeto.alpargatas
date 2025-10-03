@@ -182,7 +182,7 @@ codificados.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
 remover = ["MUNICIPIO_NOME_IBGE"]
 codificados = codificados.drop(columns=remover, errors="ignore")
 
-ods_iniciais = "dados/divulgacao_anos_iniciais_municipios_2023.xlsx'
+ods_iniciais = "dados/divulgacao_anos_iniciais_municipios_2023.xlsx"
 ods_finais = "dados/divulgacao_anos_finais_municipios_2023.xlsx"
 ods_em = "dados/divulgacao_ensino_medio_municipios_2023.xlsx"
 
@@ -1328,5 +1328,6 @@ with tab_diag:
     _diag(df_static_ready, "df_static_ready")
     _diag(evo_safe, "evolucao_filtrada")
     _diag(urg_safe, "urgentes")
+
 
 
