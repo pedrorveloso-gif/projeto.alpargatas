@@ -8,7 +8,7 @@ import streamlit as st
 ARQ_INICIAIS = "dados/anos_iniciais.xlsx"
 ARQ_FINAIS   = "dados/anos_finais.xlsx"
 ARQ_MEDIO    = "dados/ensino_medio.xlsx"
-ARQ_EVASAO   = "dados/evasao.ods"   # não usado nas métricas, só checagem
+ARQ_EVASAO   = "dados/evasao.ods"   # lido se existir
 
 # ---------------- Cidades alvo (sem Mixing Center) ----------------
 CIDADES_ALP = [
@@ -81,14 +81,12 @@ def mapear_colunas_indicadores(df):
     mapping = {}
     for col in df.columns:
         s = nrm(col)
-        # precisa ter um ano
         m = re.search(r"(\d{4})", s)
         if not m: 
             continue
         ano = int(m.group(1))
         if ano < 2000 or ano > 2100:
             continue
-        # critérios de conteúdo
         if ("APROV" in s) or ("INDICADOR" in s and "REND" in s) or s.startswith("VL_INDICADOR_REND_"):
             mapping[ano] = col
     return mapping
@@ -120,16 +118,12 @@ def media_por_municipio(df, rotulo):
              .mean())
     return out, ano
 
-# ---------- NOVO: média histórica (anos ≠ mais recente) ----------
+# ---------- Média histórica (anos ≠ mais recente) ----------
 def media_historica_por_municipio(df, rotulo_hist):
-    """
-    Média por município usando TODOS os anos disponíveis EXCETO o mais recente.
-    Se só houver 1 ano disponível, usa ele mesmo (não quebra).
-    """
     _, ano_recente, mapping = encontrar_col_indicador_mais_recente(df)
     cols_hist = [mapping[a] for a in sorted(mapping) if a != ano_recente]
     if not cols_hist:
-        cols_hist = [mapping[ano_recente]]
+        cols_hist = [mapping[ano_recente]]  # fallback se só houver 1 ano
     tmp = df[["CO_MUNICIPIO"] + cols_hist].copy()
     for c in cols_hist:
         tmp[c] = to_num(tmp[c])
@@ -138,7 +132,7 @@ def media_historica_por_municipio(df, rotulo_hist):
              .groupby("CO_MUNICIPIO", as_index=False)[rotulo_hist]
              .mean())
     return out
-# ------------------------------------------------------------------
+# -----------------------------------------------------------
 
 def evolucao_long(df):
     """wide -> long (CO_MUNICIPIO, ANO, VALOR) usando mapeamento robusto."""
@@ -146,7 +140,6 @@ def evolucao_long(df):
     if not mapping:
         return pd.DataFrame(columns=["CO_MUNICIPIO","ANO","VALOR"])
     tmp = df[["CO_MUNICIPIO"] + list(mapping.values())].copy()
-    # renomeia colunas p/ padronizar
     ren = {orig: f"VALOR_{ano}" for ano, orig in mapping.items()}
     tmp = tmp.rename(columns=ren)
     valor_cols = [c for c in tmp.columns if c.startswith("VALOR_")]
@@ -158,6 +151,65 @@ def evolucao_long(df):
     long = long.drop(columns=["COL"])
     return long
 
+# ---------- Evasão (ODS, robusto e opcional) ----------
+def ler_evasao(path):
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+    last_err = None
+    for h in (8, 9, 7, 0):
+        try:
+            df = pd.read_excel(path, engine="odf", header=h)
+            break
+        except Exception as e:
+            last_err = e
+            df = None
+    if df is None:
+        raise last_err
+
+    norm = {c: nrm(c) for c in df.columns}
+
+    def pick(*cands, contains=None):
+        alvo = {nrm(x) for x in cands}
+        # match exato em normalizado
+        for orig, n in norm.items():
+            if n in alvo:
+                return orig
+        # fallback: contém termos
+        if contains:
+            for orig, n in norm.items():
+                if all(t in n for t in contains):
+                    return orig
+        return None
+
+    col_cod  = pick("CO_MUNICIPIO","CODIGO DO MUNICIPIO","CODIGO MUNICIPIO")
+    col_nome = pick("NO_MUNICIPIO","NOME DO MUNICIPIO","MUNICIPIO")
+    col_uf   = pick("NO_UF","UF","SIGLA DA UF")
+
+    # indicadores (vários formatos comuns)
+    col_fun  = pick("1_CAT3_CATFUN", contains=("FUN", "CAT")) or pick(contains=("EVAS","FUND"))
+    col_med  = pick("1_CAT3_CATMED", contains=("MED", "CAT")) or pick(contains=("EVAS","MED"))
+
+    if not all([col_cod, col_nome, col_uf, col_fun, col_med]):
+        raise KeyError(f"Evasão: não reconheci colunas essenciais. Headers: {list(df.columns)}")
+
+    out = df[[col_cod, col_nome, col_uf, col_fun, col_med]].copy()
+    out.columns = ["CO_MUNICIPIO","NO_MUNICIPIO","NO_UF","Evasao_Fundamental","Evasao_Medio"]
+
+    out["CO_MUNICIPIO"] = (
+        out["CO_MUNICIPIO"].astype(str).str.extract(r"(\d{7})", expand=False).str.zfill(7)
+    )
+    for c in ["Evasao_Fundamental","Evasao_Medio"]:
+        out[c] = pd.to_numeric(
+            out[c].astype(str)
+                  .str.replace("%","", regex=False)
+                  .str.replace(",",".", regex=False),
+            errors="coerce"
+        )
+    out["NORM_MUN"] = out["NO_MUNICIPIO"].apply(nrm)
+    out = out[out["NORM_MUN"].isin(CIDADES_NORM)].copy()
+    return out
+# -------------------------------------------------------
+
 # ---------------- App ----------------
 st.set_page_config(page_title="Instituto Alpargatas — Painel Municípios", layout="wide")
 st.title("📊 Instituto Alpargatas — Painel Municípios (sem Dados_alpa)")
@@ -165,7 +217,8 @@ st.title("📊 Instituto Alpargatas — Painel Municípios (sem Dados_alpa)")
 with st.expander("📁 Arquivos esperados em `dados/`", expanded=False):
     for p in [ARQ_INICIAIS, ARQ_FINAIS, ARQ_MEDIO, ARQ_EVASAO]:
         st.write(("✅" if os.path.exists(p) else "❌"), p)
-    st.code("\n".join(os.listdir("dados")), language="text")
+    if os.path.exists("dados"):
+        st.code("\n".join(os.listdir("dados")), language="text")
 
 @st.cache_data(show_spinner=True)
 def build_data():
@@ -180,21 +233,19 @@ def build_data():
             .drop_duplicates())
     base = base[base["NORM_MUN"].isin(CIDADES_NORM)].copy()
 
-    # Médias (ano mais recente de cada arquivo)
+    # Médias (mais recente)
     ini, ano_ini = media_por_municipio(df_ini, "TAXA_APROVACAO_INICIAIS")
     fin, ano_fin = media_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS")
     med, ano_med = media_por_municipio(df_med, "TAXA_APROVACAO_MEDIO")
 
-    # ---------- NOVO: Médias históricas (anos ≠ mais recente)
+    # Médias históricas (anos ≠ mais recente)
     ini_hist = media_historica_por_municipio(df_ini, "TAXA_APROVACAO_INICIAIS_HIST")
     fin_hist = media_historica_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS_HIST")
     med_hist = media_historica_por_municipio(df_med, "TAXA_APROVACAO_MEDIO_HIST")
-    # -------------------------------------------------------------
 
     base = (base.merge(ini, on="CO_MUNICIPIO", how="left")
                  .merge(fin, on="CO_MUNICIPIO", how="left")
                  .merge(med, on="CO_MUNICIPIO", how="left")
-                 # ---------- NOVO: merge histórico ----------
                  .merge(ini_hist, on="CO_MUNICIPIO", how="left")
                  .merge(fin_hist, on="CO_MUNICIPIO", how="left")
                  .merge(med_hist, on="CO_MUNICIPIO", how="left"))
@@ -222,6 +273,29 @@ def build_data():
         if c in evol.columns:
             evol[c + "_%"] = (evol[c]*100).round(2)
 
+    # Evasão (opcional)
+    ev = None
+    try:
+        ev = ler_evasao(ARQ_EVASAO)
+    except Exception as e:
+        # não interrompe o app
+        st.warning(f"Evasão não carregada: {e}")
+
+    if ev is not None:
+        base = base.merge(ev[["CO_MUNICIPIO","Evasao_Fundamental","Evasao_Medio"]],
+                          on="CO_MUNICIPIO", how="left")
+        # Reprovação a partir das aprovações (%)
+        if "TAXA_APROVACAO_INICIAIS_%" in base and "TAXA_APROVACAO_FINAIS_%" in base:
+            base["Reprovacao_Iniciais"] = (100 - base["TAXA_APROVACAO_INICIAIS_%"]).clip(lower=0)
+            base["Reprovacao_Finais"]   = (100 - base["TAXA_APROVACAO_FINAIS_%"]).clip(lower=0)
+        if "TAXA_APROVACAO_MEDIO_%" in base:
+            base["Reprovacao_Medio"]    = (100 - base["TAXA_APROVACAO_MEDIO_%"]).clip(lower=0)
+
+        # Índice simples de urgência (evasão + reprovação iniciais/finais)
+        base["Urgencia"] = base[
+            ["Evasao_Fundamental","Evasao_Medio","Reprovacao_Iniciais","Reprovacao_Finais"]
+        ].sum(axis=1, skipna=True)
+
     meta = {"ANO_INI": ano_ini, "ANO_FIN": ano_fin, "ANO_MED": ano_med}
     return base, evol, meta
 
@@ -239,15 +313,15 @@ with c4: st.metric("Ano (Médio)",    meta["ANO_MED"])
 st.markdown("### 📋 Taxas mais recentes e históricas (%)")
 cols_show = ["NO_UF","NO_MUNICIPIO",
              "TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%",
-             # ---------- NOVO: histórico em % ----------
-             "TAXA_APROVACAO_INICIAIS_HIST_%","TAXA_APROVACAO_FINAIS_HIST_%","TAXA_APROVACAO_MEDIO_HIST_%"]
+             "TAXA_APROVACAO_INICIAIS_HIST_%","TAXA_APROVACAO_FINAIS_HIST_%","TAXA_APROVACAO_MEDIO_HIST_%",
+             "Evasao_Fundamental","Evasao_Medio","Reprovacao_Iniciais","Reprovacao_Finais","Urgencia"]
 cols_show = [c for c in cols_show if c in base.columns]
 st.dataframe(
     base[cols_show].sort_values(["NO_UF","NO_MUNICIPIO"]).reset_index(drop=True),
     use_container_width=True
 )
 
-# ---------------- Gráfico barras ----------------
+# ---------------- Gráfico barras (Iniciais) ----------------
 st.markdown("### 📊 Aprovação (Iniciais) — %")
 tmp = base.sort_values("TAXA_APROVACAO_INICIAIS_%", ascending=False)
 fig = px.bar(tmp, x="NO_MUNICIPIO", y="TAXA_APROVACAO_INICIAIS_%", color="NO_UF",
@@ -270,8 +344,21 @@ else:
     fig2 = px.line(e2, x="ANO", y="Aprovação (%)", color="Etapa", markers=True)
     st.plotly_chart(fig2, use_container_width=True)
 
+# ---------------- Urgência (se disponível) ----------------
+if "Urgencia" in base.columns:
+    st.markdown("### 🚨 Top urgência (maior = pior)")
+    topn = st.slider("Quantos municípios exibir", 5, 30, 15)
+    rank = (base[["NO_UF","NO_MUNICIPIO","Urgencia"]]
+            .dropna(subset=["Urgencia"])
+            .sort_values("Urgencia", ascending=False)
+            .head(topn))
+    st.plotly_chart(
+        px.bar(rank, x="NO_MUNICIPIO", y="Urgencia", color="NO_UF"),
+        use_container_width=True
+    )
+
 # ---------------- Debug opcional ----------------
-with st.expander("🔎 Debug: colunas de indicadores reconhecidas"):
+with st.expander("🔎 Debug: colunas de indicadores reconhecidas / evasão"):
     for nome, caminho in [("Iniciais", ARQ_INICIAIS), ("Finais", ARQ_FINAIS), ("Médio", ARQ_MEDIO)]:
         try:
             df = pd.read_excel(caminho, header=achar_header(caminho))
@@ -280,4 +367,11 @@ with st.expander("🔎 Debug: colunas de indicadores reconhecidas"):
             st.code("\n".join([f"{a}: {c}" for a,c in sorted(mapping.items())]), language="text")
         except Exception as e:
             st.warning(f"{nome}: {e}")
-
+    # evasão
+    if os.path.exists(ARQ_EVASAO):
+        try:
+            ev = ler_evasao(ARQ_EVASAO)
+            st.write("**Evasão** → linhas lidas:", len(ev))
+            st.dataframe(ev.head(10), use_container_width=True)
+        except Exception as e:
+            st.warning(f"Evasão: {e}")
