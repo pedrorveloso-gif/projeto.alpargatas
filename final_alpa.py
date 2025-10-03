@@ -14,6 +14,10 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+# ============================
+# Config da página (primeiro comando Streamlit)
+# ============================
+st.set_page_config(page_title="Instituto Alpargatas — Municípios", layout="wide")
 
 # ============================
 # Caminhos (fixos em dados/)
@@ -26,7 +30,6 @@ ARQ_EVASAO   = "dados/evasao.ods"   # Pandas lê .ods com odfpy
 # Exclusões explícitas de "sites" que não são municípios
 EXCLUIR = ["CAMPINA GRANDE MIXING CENTER"]
 
-
 # ============================
 # Utilitários
 # ============================
@@ -37,7 +40,6 @@ def nrm(txt: object) -> str:
     s = str(txt)
     s = unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("ASCII")
     return s.upper().strip()
-
 
 def chave_municipio(nome: str) -> str:
     """
@@ -54,19 +56,16 @@ def chave_municipio(nome: str) -> str:
             n = n[: -len(suf)].strip()
     return n
 
-
-def _norm_col(s: str) -> str:
+def _norm_col(s: object) -> str:
     return nrm(s).replace("  ", " ")
-
 
 def _find_col(df: pd.DataFrame, candidatos: list[str]) -> str | None:
     """Procura uma coluna por nomes-alvo normalizados."""
-    alvo = { _norm_col(x) for x in candidatos }
+    alvo = {_norm_col(x) for x in candidatos}
     for orig in df.columns:
         if _norm_col(orig) in alvo:
             return orig
     return None
-
 
 def _map_ano_cols(df: pd.DataFrame) -> dict[int, str]:
     """
@@ -81,11 +80,9 @@ def _map_ano_cols(df: pd.DataFrame) -> dict[int, str]:
             mapa[ano] = c
     return mapa
 
-
 def _coerce_cod_ibge(series: pd.Series) -> pd.Series:
     """Força código IBGE como string de 7 dígitos."""
-    return (series.astype(str).str.extract(r"(\d{7})", expand=False).str.zfill(7))
-
+    return series.astype(str).str.extract(r"(\d{7})", expand=False).str.zfill(7)
 
 def _read_inep(path: str, headers_try=(9, 8, 7, 0)) -> pd.DataFrame:
     """
@@ -101,8 +98,13 @@ def _read_inep(path: str, headers_try=(9, 8, 7, 0)) -> pd.DataFrame:
     # Se nada deu certo, levanta último erro
     raise last_err if last_err else FileNotFoundError(path)
 
-
 def medias_atual_e_hist(df: pd.DataFrame, rotulo_prefix: str) -> tuple[pd.DataFrame, int]:
+    """
+    Retorna:
+      - DataFrame por CO_MUNICIPIO com:
+        {rotulo}_P, {rotulo}_HIST_P (proporções 0-1) e as versões em %
+      - ano_recente detectado
+    """
     df = df.copy()
     col_cod = _find_col(df, ["CO MUNICIPIO", "CODIGO DO MUNICIPIO", "CODIGO MUNICIPIO", "CO_MUNICIPIO"])
     if not col_cod:
@@ -118,14 +120,14 @@ def medias_atual_e_hist(df: pd.DataFrame, rotulo_prefix: str) -> tuple[pd.DataFr
     col_atual = mapa[ano_recente]
     cols_hist = [mapa[a] for a in mapa if a != ano_recente]
     if not cols_hist:
-        cols_hist = [col_atual]
+        cols_hist = [col_atual]  # fallback (não deve acontecer em geral)
 
     usar_cols = [col_atual] + cols_hist
     num = df[[col_cod] + usar_cols].copy()
     for c in usar_cols:
         num[c] = pd.to_numeric(num[c], errors="coerce")
 
-    # <- removido skipna=True
+    # média por município (NaN são ignorados por padrão)
     grp = num.groupby(col_cod, as_index=False)[usar_cols].mean()
 
     out = grp[[col_cod]].copy()
@@ -139,8 +141,10 @@ def medias_atual_e_hist(df: pd.DataFrame, rotulo_prefix: str) -> tuple[pd.DataFr
 
     return out.rename(columns={col_cod: "CO_MUNICIPIO"}), ano_recente
 
-
 def long_por_municipio_ano(df: pd.DataFrame, etapa_rotulo: str) -> pd.DataFrame:
+    """
+    Constrói série longa: CO_MUNICIPIO, ANO, <etapa_rotulo> (proporção 0–1)
+    """
     df = df.copy()
     col_cod = _find_col(df, ["CO MUNICIPIO", "CODIGO DO MUNICIPIO", "CODIGO MUNICIPIO", "CO_MUNICIPIO"])
     if not col_cod:
@@ -160,11 +164,9 @@ def long_por_municipio_ano(df: pd.DataFrame, etapa_rotulo: str) -> pd.DataFrame:
     long_df["ANO"] = long_df["COL"].str.extract(r"(\d{4})").astype(int)
     long_df.drop(columns=["COL"], inplace=True)
 
-    # <- removido skipna=True
+    # média por município-ano
     long_grp = long_df.groupby([col_cod, "ANO"], as_index=False)[etapa_rotulo].mean()
     return long_grp.rename(columns={col_cod: "CO_MUNICIPIO"})
-
-
 
 # ============================
 # Evasão (abandono)
@@ -214,12 +216,22 @@ def carrega_evasao(path: str) -> pd.DataFrame:
 
     return out
 
+# ============================
+# Checagem de arquivos
+# ============================
+def _check_files():
+    missing = [p for p in [ARQ_INICIAIS, ARQ_FINAIS, ARQ_MEDIO, ARQ_EVASAO] if not Path(p).exists()]
+    if missing:
+        st.error("Arquivos não encontrados:\n" + "\n".join(f"• {m}" for m in missing))
+        st.stop()
 
 # ============================
 # Build data (cache)
 # ============================
 @st.cache_data(show_spinner=True)
 def build_data():
+    _check_files()
+
     # --- Ler INEP (aprovação)
     df_ini = _read_inep(ARQ_INICIAIS)
     df_fin = _read_inep(ARQ_FINAIS)
@@ -258,6 +270,10 @@ def build_data():
                       on="CO_MUNICIPIO", how="left")
 
     # --- Reprovação (em %) a partir da aprovação atual (em %)
+    base["APROVACAO_INICIAIS_%"] = (base["APROVACAO_INICIAIS_P"] * 100).round(2)
+    base["APROVACAO_FINAIS_%"]   = (base["APROVACAO_FINAIS_P"]   * 100).round(2)
+    base["APROVACAO_MEDIO_%"]    = (base["APROVACAO_MEDIO_P"]    * 100).round(2)
+
     base["Reprovacao_Iniciais"] = (100 - base["APROVACAO_INICIAIS_%"]).clip(lower=0)
     base["Reprovacao_Finais"]   = (100 - base["APROVACAO_FINAIS_%"]).clip(lower=0)
     base["Reprovacao_Medio"]    = (100 - base["APROVACAO_MEDIO_%"]).clip(lower=0)
@@ -288,17 +304,20 @@ def build_data():
         on="CO_MUNICIPIO", how="left"
     )
 
+    # Exclusão extra por chave (caso meta venha de outra fonte no futuro)
+    excluir_norm = {chave_municipio(x) for x in EXCLUIR}
+    base = base[~base["MUNICIPIO_CHAVE"].isin(excluir_norm)].copy()
+    evolucao = evolucao[~evolucao["MUNICIPIO_CHAVE"].isin(excluir_norm)].copy()
+
     meta = {
-        "ano_recente": max(ano_ini, ano_fin, ano_med),
+        "ano_recente": int(max(ano_ini, ano_fin, ano_med)),
         "n_munis": int(base["CO_MUNICIPIO"].nunique()),
     }
     return base, evolucao, meta
 
-
 # ============================
 # UI
 # ============================
-st.set_page_config(page_title="Instituto Alpargatas — Municípios", layout="wide")
 st.title("📊 Instituto Alpargatas — Painel Municípios (sem Dados_alpa)")
 
 # Carrega dados
@@ -311,7 +330,6 @@ col_f1, col_f2 = st.columns([1,2])
 with col_f1:
     sel_ufs = st.multiselect("UF", options=ufs, default=ufs)
 with col_f2:
-    # opções de município dependem da UF filtrada
     base_uf = base[base["NO_UF"].isin(sel_ufs)] if sel_ufs else base.copy()
     munis_opts = sorted([m for m in base_uf["NO_MUNICIPIO"].dropna().unique().tolist()])
     sel_munis = st.multiselect("Municípios", options=munis_opts, default=munis_opts)
@@ -329,13 +347,13 @@ with c1:
     st.metric("Municípios", f"{base_f['CO_MUNICIPIO'].nunique():,}".replace(",", "."))
 with c2:
     st.metric("Aprovação média — atual (%)",
-              f"{base_f['APROVACAO_MEDIA_GERAL_%'].mean(skipna=True):.2f}" if not base_f.empty else "—")
+              f"{base_f['APROVACAO_MEDIA_GERAL_%'].mean():.2f}" if not base_f.empty else "—")
 with c3:
     st.metric("Aprovação média — histórica (%)",
-              f"{base_f['APROVACAO_MEDIA_HIST_%'].mean(skipna=True):.2f}" if not base_f.empty else "—")
+              f"{base_f['APROVACAO_MEDIA_HIST_%'].mean():.2f}" if not base_f.empty else "—")
 with c4:
     st.metric("Urgência média",
-              f"{base_f['Urgencia'].mean(skipna=True):.2f}" if not base_f.empty else "—")
+              f"{base_f['Urgencia'].mean():.2f}" if not base_f.empty else "—")
 
 st.divider()
 
@@ -351,7 +369,10 @@ cols_show = [
 ]
 cols_show = [c for c in cols_show if c in base_f.columns]
 st.subheader("Tabela (seleção atual)")
-st.dataframe(base_f[cols_show].sort_values(["NO_UF","NO_MUNICIPIO"]).reset_index(drop=True), use_container_width=True)
+st.dataframe(
+    base_f[cols_show].sort_values(["NO_UF","NO_MUNICIPIO"]).reset_index(drop=True),
+    use_container_width=True
+)
 
 st.divider()
 
@@ -393,8 +414,8 @@ if sel_ufs:
 if sel_munis:
     evo_f = evo_f[evo_f["NO_MUNICIPIO"].isin(sel_munis)]
 
-serie = (evo_f.groupby(["ANO"], as_index=False)["APROVACAO_MEDIA_GERAL_%"]
-              .mean(numeric_only=True))
+# <- sem numeric_only=True (para evitar TypeError em SeriesGroupBy)
+serie = evo_f.groupby("ANO", as_index=False)[["APROVACAO_MEDIA_GERAL_%"]].mean()
 st.plotly_chart(
     px.line(serie, x="ANO", y="APROVACAO_MEDIA_GERAL_%", markers=True,
             title="Aprovação média geral (%) — municípios selecionados")
@@ -421,4 +442,3 @@ st.plotly_chart(
 st.caption("Obs.: Urgência = Evasão(Fund + Médio) + Reprovação(Iniciais + Finais). "
            "Aprovações 'Atual' usam o ano mais recente detectado nos arquivos; "
            "Histórico = média de todos os anos disponíveis, exceto o mais recente.")
-
