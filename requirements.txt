@@ -6,3 +6,4 @@ seaborn
 scikit-learn
 streamlit
 openpyxl
+odfpy
