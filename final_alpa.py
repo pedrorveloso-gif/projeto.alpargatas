@@ -22,7 +22,6 @@ CIDADES_ALP = [
     "LAGOA SECA","MOGEIRO","MONTES CLAROS","QUEIMADAS","SANTA RITA",
     "SÃO PAULO","SERRA REDONDA",
 ]
-EXCLUIR = {"CAMPINA GRANDE - MIXING CENTER"}
 UFS_ALVO = {"PB","PE","SP","MG"}  # restringe homônimos de outros estados
 
 # =========================================================
@@ -273,3 +272,4 @@ if not evo_f.empty:
     st.plotly_chart(figL, use_container_width=True)
 else:
     st.info("Selecione ao menos um município para ver a evolução.")
+
