@@ -125,9 +125,9 @@ def processa_aprovacao(df_iniciais, df_finais, df_em, codificados: pd.DataFrame)
                .groupby("CO_MUNICIPIO", as_index=False)[rotulo_saida].mean())
         return out
     
-    ini = media_por_municipio(df_iniciais, "TAXA_APROVACAO_INICIAIS")
-    fin = media_por_municipio(df_finais,   "TAXA_APROVACAO_FINAIS")
-    med = media_por_municipio(df_em,       "TAXA_APROVACAO_MEDIO")
+    ini = media_por_municipio(df_iniciais,"TAXA_APROVACAO_INICIAIS")
+    fin = media_por_municipio(df_finais,"TAXA_APROVACAO_FINAIS")
+    med = media_por_municipio(df_em,"TAXA_APROVACAO_MEDIO")
 
     # Merge e pós-processamento
     res = codificados.copy()
