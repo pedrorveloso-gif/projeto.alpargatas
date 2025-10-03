@@ -45,26 +45,49 @@ def _num(s):
 # ============================
 # 2) Carregamento Alpargatas (somente abas com CIDADES/UF)
 # ============================
-def carrega_alpargatas(path):
+def carrega_alpargatas(path: str) -> pd.DataFrame:
+    """Lê todas as abas (2020–2025), detecta header e extrai CIDADES/UF em um único DataFrame."""
     xls = pd.ExcelFile(path)
+    abas = [a for a in xls.sheet_names if any(str(ano) in a for ano in range(2020, 2026))]
+    if not abas:
+        raise RuntimeError("Nenhuma aba 2020–2025 encontrada no arquivo Alpargatas.")
+
     frames = []
-    for aba in xls.sheet_names:
-        df = pd.read_excel(path, sheet_name=aba, header=6)  # cabeçalho linha 7
-        cols_norm = {c: nrm(c) for c in df.columns}
-        if "CIDADES" in cols_norm.values() and "UF" in cols_norm.values():
-            c_cid = next(k for k,v in cols_norm.items() if v=="CIDADES")
-            c_uf  = next(k for k,v in cols_norm.items() if v=="UF")
-            tmp = df[[c_cid, c_uf]].dropna()
-            tmp = tmp.rename(columns={c_cid:"MUNICIPIO_NOME_ALP", c_uf:"UF_SIGLA"})
-            tmp["MUNICIPIO_CHAVE"] = tmp["MUNICIPIO_NOME_ALP"].apply(chave_municipio)
-            tmp["UF_SIGLA"] = tmp["UF_SIGLA"].astype(str).str.strip()
-            tmp["FONTE_ABA"] = aba
-            frames.append(tmp)
-        else:
-            st.warning(f"Aba '{aba}': sem colunas CIDADES/UF. Pulando…")
+    for aba in abas:
+        # Lê as primeiras linhas sem header só para acharmos onde começa CIDADES/UF
+        nohdr = pd.read_excel(path, sheet_name=aba, header=None, nrows=400)
+        hdr   = acha_linha_header_cidades_uf(nohdr)
+        if hdr is None:
+            print(f"[AVISO] Não achei cabeçalho CIDADES/UF na aba '{aba}'. Pulando…")
+            continue
+
+        df = pd.read_excel(path, sheet_name=aba, header=hdr)
+
+        # Descobre as colunas "Cidades" e "UF" em qualquer grafia
+        cmap = {c: nrm(c) for c in df.columns}
+        c_cid = next((orig for orig, norm in cmap.items() if norm == "CIDADES"), None)
+        c_uf  = next((orig for orig, norm in cmap.items() if norm == "UF"), None)
+        if not c_cid or not c_uf:
+            print(f"[AVISO] Colunas 'CIDADES'/'UF' não encontradas após header na aba '{aba}'.")
+            continue
+
+        tmp = (df[[c_cid, c_uf]].copy()
+                 .rename(columns={c_cid:"MUNICIPIO_NOME_ALP", c_uf:"UF_SIGLA"}))
+        tmp["MUNICIPIO_NOME_ALP"] = tmp["MUNICIPIO_NOME_ALP"].astype(str).str.upper().str.strip()
+        tmp["UF_SIGLA"]           = tmp["UF_SIGLA"].astype(str).str.strip()
+        tmp = tmp.dropna(subset=["MUNICIPIO_NOME_ALP","UF_SIGLA"])
+        tmp = tmp[tmp["MUNICIPIO_NOME_ALP"].str.len() > 0]
+
+        tmp["MUNICIPIO_CHAVE"] = tmp["MUNICIPIO_NOME_ALP"].apply(chave_municipio)
+        tmp["FONTE_ABA"]       = aba
+        frames.append(tmp)
+
     if not frames:
-        raise RuntimeError("Nenhuma aba com CIDADES/UF encontrada em Dados_alpa.xlsx")
+        raise RuntimeError("Nenhuma aba válida foi processada (CIDADES/UF não encontrado).")
+
+    # remove duplicados entre abas (mesma cidade/UF pode aparecer em mais de uma aba)
     return pd.concat(frames, ignore_index=True).drop_duplicates(["MUNICIPIO_CHAVE","UF_SIGLA"])
+
 
 # ============================
 # 3) Carregar INEP (taxa de aprovação por município)
