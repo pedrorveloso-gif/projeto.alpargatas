@@ -319,8 +319,8 @@ res = res.iloc[:18]
 
 # Preenchimento dos valores nulos (Baía da Traição), apoós rápida checagem no dataset do inep 
 # Coletamos a média dos últimos anos preenchidos a substituímos na nossa tabela
-res.loc[1, "TAXA_APROVACAO_INICIAIS_%"] = "90.66"
-res.loc[1, "TAXA_APROVACAO_INICIAIS"] = "0.9066"
+res.loc[1, "TAXA_APROVACAO_INICIAIS_%"] = 90.66
+res.loc[1, "TAXA_APROVACAO_INICIAIS"] = 0.9066
 
 # Garantir que as colunas sejam numéricas
 for col in ["TAXA_APROVACAO_INICIAIS_%", "TAXA_APROVACAO_FINAIS_%", "TAXA_APROVACAO_MEDIO_%"]:
@@ -1340,6 +1340,7 @@ with tab_diag:
     _diag(df_static_ready, "df_static_ready")
     _diag(evo_safe, "evolucao_filtrada")
     _diag(urg_safe, "urgentes")
+
 
 
 
