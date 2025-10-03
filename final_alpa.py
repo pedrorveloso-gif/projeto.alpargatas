@@ -1,16 +1,23 @@
 # final_alpa.py
-# App Streamlit: Painel Municípios (sem Dados_alpa) + injeção de dados/urgentes.csv
-
 import os, re, unicodedata
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 # ---------------- Caminhos ----------------
-ARQ_INICIAIS = "dados/anos_iniciais.xlsx"
-ARQ_FINAIS   = "dados/anos_finais.xlsx"
-ARQ_MEDIO    = "dados/ensino_medio.xlsx"
-ARQ_URGENTES = "dados/urgentes.csv"   # << NOVO
+ARQ_INICIAIS  = "dados/anos_iniciais.xlsx"
+ARQ_FINAIS    = "dados/anos_finais.xlsx"
+ARQ_MEDIO     = "dados/ensino_medio.xlsx"
+ARQ_EVASAO    = "dados/evasao.ods"          # opcional (não usamos aqui)
+ARQ_URGENTES  = "dados/urgentes.csv"        # <- INJEÇÃO MANUAL
+
+# ---------------- Cidades alvo (sem Mixing Center) ----------------
+CIDADES_ALP = [
+    "ALAGOA NOVA","BANANEIRAS","CABACEIRAS","CAMPINA GRANDE",
+    "CARPINA","CATURITÉ","GUARABIRA","INGÁ","ITATUBA","JOÃO PESSOA",
+    "LAGOA SECA","MOGEIRO","MONTES CLAROS","QUEIMADAS","SANTA RITA",
+    "SÃO PAULO","SERRA REDONDA"
+]
 
 # ---------------- Utils ----------------
 def nrm(x):
@@ -20,8 +27,10 @@ def nrm(x):
     s = s.replace("–","-").replace("—","-")
     return " ".join(s.upper().split())
 
+CIDADES_NORM = {nrm(c) for c in CIDADES_ALP}
+
 def achar_header(path, max_rows=80):
-    """Acha linha de cabeçalho (onde aparecem UF + CODIGO + NOME)."""
+    """Acha a linha de cabeçalho (onde aparecem UF + CODIGO + NOME)."""
     tmp = pd.read_excel(path, header=None, nrows=max_rows)
     for i, row in tmp.iterrows():
         vals = [nrm(v) for v in row.tolist()]
@@ -74,10 +83,10 @@ def mapear_colunas_indicadores(df):
     for col in df.columns:
         s = nrm(col)
         m = re.search(r"(\d{4})", s)
-        if not m:
+        if not m: 
             continue
         ano = int(m.group(1))
-        if not (2000 <= ano <= 2100):
+        if ano < 2000 or ano > 2100:
             continue
         if ("APROV" in s) or ("INDICADOR" in s and "REND" in s) or s.startswith("VL_INDICADOR_REND_"):
             mapping[ano] = col
@@ -129,8 +138,6 @@ def evolucao_long(df):
 
 # ---------- URGENTES.CSV ----------
 def ler_urgentes(path_csv: str) -> pd.DataFrame:
-    """Lê dados/urgentes.csv e padroniza nomes/numéricos.
-       Mantém 1 linha por município (preferência Total/Total)."""
     if not os.path.exists(path_csv):
         return pd.DataFrame()
 
@@ -142,7 +149,7 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
     except Exception:
         u = pd.read_csv(path_csv, sep=";")
 
-    # renomes mais comuns
+    # renomes mais comuns -> nomes que usaremos no merge
     ren = {}
     for c in list(u.columns):
         cn = nrm(c)
@@ -151,10 +158,12 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
             ren[c] = "Evasao_Fundamental"
         if cn in {"EVASAO-MEDIO","EVASAO - MEDIO","EVASAO MEDIO"}:
             ren[c] = "Evasao_Medio"
-        if cn in {"MEDIA_HISTORICA","MEDIA HISTORICA","MEDIA-HISTORICA","MEDIA HISTORICA %","MEDIA_HISTORICA_%","MEDIA HISTORICA (%)","MEDIA_HISTORICA(%)","MEDIA HISTORICA PERCENT"}:
+        if cn in {
+            "MEDIA_HISTORICA","MEDIA HISTORICA","MEDIA-HISTORICA",
+            "MEDIA HISTORICA %","MEDIA_HISTORICA_%","MEDIA HISTORICA (%)",
+            "MEDIA_HISTORICA(%)","MEDIA HISTORICA PERCENT"
+        }:
             ren[c] = "MEDIA_HISTORICA_%"
-        if cn in {"MUNICIPIO_CHAVE"}:
-            ren[c] = "MUNICIPIO_CHAVE"
     if ren:
         u = u.rename(columns=ren)
 
@@ -162,16 +171,10 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
     for col in [c for c in ["NO_UF","MUNICIPIO_NOME_ALP","NO_MUNICIPIO","NO_LOCALIZACAO","NO_DEPENDENCIA"] if c in u]:
         u[col] = u[col].astype(str).str.strip()
 
-    # cria chave de match por nome (prefere coluna da Alpa)
-    base_nome = None
-    if "MUNICIPIO_NOME_ALP" in u:
-        base_nome = u["MUNICIPIO_NOME_ALP"]
-    elif "NO_MUNICIPIO" in u:
-        base_nome = u["NO_MUNICIPIO"]
-    else:
-        # sem nome => nada a fazer
+    # chave de match por nome (prefere coluna da Alpa)
+    base_nome = u["MUNICIPIO_NOME_ALP"] if "MUNICIPIO_NOME_ALP" in u else u.get("NO_MUNICIPIO")
+    if base_nome is None:
         return pd.DataFrame()
-
     u["NORM_MUN"] = base_nome.apply(nrm)
 
     # preferir linhas 'Total/Total' quando houver múltiplas por município
@@ -187,40 +190,44 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
     # numéricos
     num_cols = [
         "Evasao_Fundamental","Evasao_Medio",
-        "TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS",
         "Reprovacao_Iniciais","Reprovacao_Finais",
         "Urgencia","MEDIA_HISTORICA_%"
     ]
     for c in [c for c in num_cols if c in u]:
         u[c] = to_num(u[c])
 
-    return u
+    # só o que interessa para injeção
+    cols = [c for c in [
+        "NO_UF","NORM_MUN","Evasao_Fundamental","Evasao_Medio",
+        "Reprovacao_Iniciais","Reprovacao_Finais","Urgencia",
+        "MEDIA_HISTORICA_%","NO_LOCALIZACAO","NO_DEPENDENCIA"
+    ] if c in u.columns]
+    return u[cols]
 
 # ---------------- App ----------------
 st.set_page_config(page_title="Instituto Alpargatas — Painel Municípios", layout="wide")
 st.title("📊 Instituto Alpargatas — Painel Municípios (sem Dados_alpa)")
 
 with st.expander("📁 Arquivos esperados em `dados/`", expanded=False):
-    for p in [ARQ_INICIAIS, ARQ_FINAIS, ARQ_MEDIO, ARQ_URGENTES]:
+    for p in [ARQ_INICIAIS, ARQ_FINAIS, ARQ_MEDIO, ARQ_EVASAO, ARQ_URGENTES]:
         st.write(("✅" if os.path.exists(p) else "❌"), p)
     if os.path.exists("dados"):
         st.code("\n".join(os.listdir("dados")), language="text")
 
 @st.cache_data(show_spinner=True)
 def build_data():
-    # --- INEP
     df_ini = ler_planilha_inep(ARQ_INICIAIS)
     df_fin = ler_planilha_inep(ARQ_FINAIS)
     df_med = ler_planilha_inep(ARQ_MEDIO)
 
+    # Normalização e filtro das cidades alvo
     for df in (df_ini, df_fin, df_med):
         df["NORM_MUN"] = df["NO_MUNICIPIO"].apply(nrm)
-
-    # base com UF/nome/código
     base = (df_ini[["NO_UF","CO_MUNICIPIO","NO_MUNICIPIO","NORM_MUN"]]
             .drop_duplicates())
+    base = base[base["NORM_MUN"].isin(CIDADES_NORM)].copy()
 
-    # --- Médias mais recentes por etapa
+    # Médias (ano mais recente de cada arquivo)
     ini, ano_ini = media_por_municipio(df_ini, "TAXA_APROVACAO_INICIAIS")
     fin, ano_fin = media_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS")
     med, ano_med = media_por_municipio(df_med, "TAXA_APROVACAO_MEDIO")
@@ -233,53 +240,52 @@ def build_data():
         if c in base.columns:
             base[c + "_%"] = (base[c]*100).round(2)
 
-    # --- Evolução (série histórica)
+    # Evolução (apenas municípios filtrados)
     long_ini = evolucao_long(df_ini)
     long_fin = evolucao_long(df_fin)
     long_med = evolucao_long(df_med)
+
     evol = (long_ini.rename(columns={"VALOR":"APROVACAO_INICIAIS"})
                  .merge(long_fin.rename(columns={"VALOR":"APROVACAO_FINAIS"}),
                         on=["CO_MUNICIPIO","ANO"], how="outer")
                  .merge(long_med.rename(columns={"VALOR":"APROVACAO_MEDIO"}),
                         on=["CO_MUNICIPIO","ANO"], how="outer"))
+
     evol = evol.merge(base[["CO_MUNICIPIO","NO_MUNICIPIO","NO_UF","NORM_MUN"]].drop_duplicates(),
                       on="CO_MUNICIPIO", how="left")
+    evol = evol[evol["NORM_MUN"].isin(CIDADES_NORM)].copy()
     for c in ["APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO"]:
         if c in evol.columns:
             evol[c + "_%"] = (evol[c]*100).round(2)
 
-    # --- URGENTES.CSV (injeção manual)
+    # ---------- URGENTES.CSV (injeta + filtra apenas urgentes)
     urg = ler_urgentes(ARQ_URGENTES)
     if not urg.empty:
-        # Limita o painel a somente os municípios urgentes
-        urgentes_set = set(urg["NORM_MUN"].tolist())
+        urgentes_set = set(urg["NORM_MUN"])
         base = base[base["NORM_MUN"].isin(urgentes_set)].copy()
         evol = evol[evol["NORM_MUN"].isin(urgentes_set)].copy()
 
-        # Merge dos campos da planilha urgentes
-        cols_injetar = [c for c in [
-            "NO_UF","NORM_MUN","Evasao_Fundamental","Evasao_Medio",
-            "Reprovacao_Iniciais","Reprovacao_Finais","Urgencia",
-            "MEDIA_HISTORICA_%","NO_LOCALIZACAO","NO_DEPENDENCIA",
-            "MUNICIPIO_NOME_ALP","NO_MUNICIPIO"  # mantém para referência
-        ] if c in urg.columns]
-        inj = urg[cols_injetar].drop_duplicates(["NO_UF","NORM_MUN"])
+        # merge (evita colisões com sufixo no lado direito)
+        base = base.merge(urg, on=["NO_UF","NORM_MUN"], how="left", suffixes=("", "_urg"))
 
-        base = base.merge(inj, on=["NO_UF","NORM_MUN"], how="left", suffixes=("",""))
+        # reprovação caso não venha no CSV
+        if "Reprovacao_Iniciais" not in base.columns and "TAXA_APROVACAO_INICIAIS_%" in base:
+            base["Reprovacao_Iniciais"] = (100 - base["TAXA_APROVACAO_INICIAIS_%"]).clip(lower=0)
+        if "Reprovacao_Finais" not in base.columns and "TAXA_APROVACAO_FINAIS_%" in base:
+            base["Reprovacao_Finais"] = (100 - base["TAXA_APROVACAO_FINAIS_%"]).clip(lower=0)
 
-        # Se reprovação não veio, calcula a partir das aprovações (%)
-        if "Reprovacao_Iniciais" not in base:
-            base["Reprovacao_Iniciais"] = 100 - base["TAXA_APROVACAO_INICIAIS_%"]
-        if "Reprovacao_Finais" not in base:
-            base["Reprovacao_Finais"] = 100 - base["TAXA_APROVACAO_FINAIS_%"]
+        # urgência caso não tenha vindo
+        if "Urgencia" not in base.columns:
+            base["Urgencia"] = base[
+                [c for c in ["Evasao_Fundamental","Evasao_Medio","Reprovacao_Iniciais","Reprovacao_Finais"] if c in base]
+            ].sum(axis=1, skipna=True)
 
-        # Média geral atual (%)
-        base["APROVACAO_MEDIA_GERAL_%"] = base[
-            [c for c in ["TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%"] if c in base]
-        ].mean(axis=1, skipna=True)
+    # média geral atual (%) para ranking
+    base["APROVACAO_MEDIA_GERAL_%"] = base[
+        [c for c in ["TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%"] if c in base]
+    ].mean(axis=1, skipna=True)
 
-    meta = {"ANO_INI": ano_ini, "ANO_FIN": ano_fin, "ANO_MED": ano_med,
-            "TEM_URGENTES": not urg.empty}
+    meta = {"ANO_INI": ano_ini, "ANO_FIN": ano_fin, "ANO_MED": ano_med}
     return base, evol, meta
 
 with st.spinner("Carregando e processando…"):
@@ -287,13 +293,13 @@ with st.spinner("Carregando e processando…"):
 
 # ---------------- KPIs ----------------
 c1,c2,c3,c4 = st.columns(4)
-with c1: st.metric("Municípios exibidos", f"{base['CO_MUNICIPIO'].nunique()}")
+with c1: st.metric("Municípios no painel", f"{base['CO_MUNICIPIO'].nunique()}")
 with c2: st.metric("Ano (Iniciais)", meta["ANO_INI"])
 with c3: st.metric("Ano (Finais)",   meta["ANO_FIN"])
 with c4: st.metric("Ano (Médio)",    meta["ANO_MED"])
 
-# ---------------- Tabela principal ----------------
-st.markdown("### 📋 Tabela (municípios urgentes)")
+# ---------------- Tabela ----------------
+st.markdown("### 📋 Tabela (com urgência & evasão)")
 cols_show = [
     "NO_UF","NO_MUNICIPIO",
     "TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%",
@@ -307,48 +313,37 @@ st.dataframe(
     use_container_width=True
 )
 
-# ---------------- Gráfico barras (Iniciais) ----------------
-st.markdown("### 📊 Aprovação (Iniciais) — %")
-tmp = base.sort_values("TAXA_APROVACAO_INICIAIS_%", ascending=False)
-fig = px.bar(tmp, x="NO_MUNICIPIO", y="TAXA_APROVACAO_INICIAIS_%", color="NO_UF",
-             labels={"NO_MUNICIPIO":"Município","TAXA_APROVACAO_INICIAIS_%":"Iniciais (%)","NO_UF":"UF"})
-st.plotly_chart(fig, use_container_width=True)
+# ---------------- Gráfico barras ----------------
+st.markdown("### 🔥 Top urgência")
+topn = st.slider("Quantos municípios exibir", 5, 30, 15, 1)
+rank = (base[["NO_UF","NO_MUNICIPIO","Urgencia"]]
+        .dropna(subset=["Urgencia"])
+        .sort_values("Urgencia", ascending=False)
+        .head(topn))
+st.plotly_chart(
+    px.bar(rank, x="NO_MUNICIPIO", y="Urgencia", color="NO_UF",
+           labels={"NO_MUNICIPIO":"Município","Urgencia":"Índice de urgência","NO_UF":"UF"}),
+    use_container_width=True
+)
 
 # ---------------- Evolução ----------------
-st.markdown("### 📈 Evolução por município")
+st.markdown("### 📈 Evolução por município (aprov. %)")
 mun = st.selectbox("Escolha um município", sorted(base["NO_MUNICIPIO"].unique()))
 e = evol[evol["NO_MUNICIPIO"] == mun].sort_values("ANO")
 if e.empty:
     st.info("Sem série histórica disponível para este município.")
 else:
-    e2 = e.melt(id_vars=["ANO"],
+    e2 = e.melt(id_vars=["ANO"], 
                 value_vars=[c for c in ["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%","APROVACAO_MEDIO_%"] if c in e],
                 var_name="Etapa", value_name="Aprovação (%)")
     e2["Etapa"] = (e2["Etapa"].str.replace("_%","", regex=False)
                              .str.replace("APROVACAO_","", regex=False)
                              .str.title())
-    fig2 = px.line(e2, x="ANO", y="Aprovação (%)", color="Etapa", markers=True)
-    st.plotly_chart(fig2, use_container_width=True)
-
-# ---------------- Top urgência (se houver) ----------------
-if "Urgencia" in base.columns:
-    st.markdown("### 🚨 Top urgência")
-    topn = st.slider("Quantos municípios exibir", 5, 30, 15, 1)
-    rank_urg = (base[["NO_UF","NO_MUNICIPIO","Urgencia"]]
-                .dropna(subset=["Urgencia"])
-                .sort_values("Urgencia", ascending=False)
-                .head(topn))
-    st.plotly_chart(
-        px.bar(rank_urg, x="NO_MUNICIPIO", y="Urgencia", color="NO_UF",
-               title=f"Top {len(rank_urg)} — urgência (maior = pior)")
-          .update_layout(xaxis_title="", yaxis_title="Índice"),
-        use_container_width=True
-    )
-else:
-    st.info("Arquivo `dados/urgentes.csv` não encontrado ou sem coluna 'Urgencia' — gráfico de urgência oculto.")
+    st.plotly_chart(px.line(e2, x="ANO", y="Aprovação (%)", color="Etapa", markers=True),
+                    use_container_width=True)
 
 # ---------------- Debug opcional ----------------
-with st.expander("🔎 Debug: colunas de indicadores reconhecidas / merge urgentes"):
+with st.expander("🔎 Debug: colunas de indicadores reconhecidas"):
     for nome, caminho in [("Iniciais", ARQ_INICIAIS), ("Finais", ARQ_FINAIS), ("Médio", ARQ_MEDIO)]:
         try:
             df = pd.read_excel(caminho, header=achar_header(caminho))
@@ -357,9 +352,5 @@ with st.expander("🔎 Debug: colunas de indicadores reconhecidas / merge urgent
             st.code("\n".join([f"{a}: {c}" for a,c in sorted(mapping.items())]), language="text")
         except Exception as e:
             st.warning(f"{nome}: {e}")
-    if os.path.exists(ARQ_URGENTES):
-        u = ler_urgentes(ARQ_URGENTES)
-        st.write("**Urgentes (preview, 10 linhas):**", u.head(10))
-        st.write("Total urgentes lidos:", len(u))
-    else:
-        st.write("`dados/urgentes.csv` não encontrado.")
+
+
