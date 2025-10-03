@@ -1,4 +1,4 @@
-esse é o código que rodou: # final_alpa.py
+# final_alpa.py
 import os, re, unicodedata
 import pandas as pd
 import plotly.express as px
@@ -246,3 +246,4 @@ with st.expander("🔎 Debug: colunas de indicadores reconhecidas"):
             st.code("\n".join([f"{a}: {c}" for a,c in sorted(mapping.items())]), language="text")
         except Exception as e:
             st.warning(f"{nome}: {e}")
+
