@@ -32,7 +32,12 @@ import warnings
 
 # Ignora warnings do Pandas (como SettingWithCopyWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
-warnings.filterwarnings('ignore', category=UserWarning)
+# Importa o módulo warnings e o Pandas no topo (se não estiverem lá)
+import warnings
+import pandas as pd # <-- Garanta que está importado
+
+# ... (Linha 35 original removida/comentada)
+warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning)
 
 UF_SIGLAS = {
     "ACRE":"AC","ALAGOAS":"AL","AMAPÁ":"AP","AMAZONAS":"AM","BAHIA":"BA","CEARÁ":"CE",
