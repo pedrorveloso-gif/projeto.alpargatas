@@ -1,6 +1,6 @@
 # gpt.py
 # Painel Instituto Alpargatas — Municípios + Aprovação + Evasão + Urgência
-# Sem SAIDA_DIR, com UI Streamlit e downloads on-demand.
+# Agora com filtro por UF (sidebar) e downloads on-demand.
 
 import pandas as pd
 import numpy as np
@@ -24,22 +24,19 @@ ARQ_EVASAO   = "dados/evasao.ods"
 # 1) Utilitários curtos
 # ============================
 def nrm(txt: object) -> str:
-    """Remove acentos, vira CAIXA-ALTA, tira espaços. NaN -> ''."""
     if pd.isna(txt): return ""
     s = str(txt)
-    s = unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("ASCII")
+    s = unicodedata.normalize("NFKD", s).encode("ASCII","ignore").decode("ASCII")
     return s.upper().strip()
 
 def chave_municipio(nome: str) -> str:
-    """Chave 'suave' para casamento por nome."""
-    n = nrm(nome).replace("–", "-").replace("—", "-")
+    n = nrm(nome).replace("–","-").replace("—","-")
     if " - " in n: n = n.split(" - ")[0]
     for suf in (" MIXING CENTER"," DISTRITO"," DISTRITO INDUSTRIAL"):
         if n.endswith(suf): n = n[: -len(suf)].strip()
     return n
 
 def acha_linha_header_cidades_uf(df_no_header: pd.DataFrame) -> int | None:
-    """Retorna a linha que contém CIDADES e UF após normalização."""
     for i, row in df_no_header.iterrows():
         vals = [nrm(x) for x in row.tolist()]
         if "CIDADES" in vals and "UF" in vals:
@@ -50,7 +47,6 @@ def to7(s: pd.Series) -> pd.Series:
     return s.astype(str).str.extract(r"(\d{7})", expand=False).str.zfill(7)
 
 def _num(s: pd.Series) -> pd.Series:
-    """Converte string com %, vírgula para float."""
     return pd.to_numeric(
         s.astype(str).str.replace("%","",regex=False).str.replace(",",".",regex=False),
         errors="coerce"
@@ -60,7 +56,6 @@ def _num(s: pd.Series) -> pd.Series:
 # 2) DTB / IBGE
 # ============================
 def carrega_dtb(path: str) -> pd.DataFrame:
-    """Lê DTB (ODS IBGE) e devolve UF_SIGLA, MUNICIPIO_CODIGO, MUNICIPIO_NOME, MUNICIPIO_CHAVE."""
     UF_SIGLAS = {
         "ACRE":"AC","ALAGOAS":"AL","AMAPÁ":"AP","AMAZONAS":"AM","BAHIA":"BA",
         "CEARÁ":"CE","DISTRITO FEDERAL":"DF","ESPÍRITO SANTO":"ES","GOIÁS":"GO",
@@ -70,15 +65,12 @@ def carrega_dtb(path: str) -> pd.DataFrame:
         "RONDÔNIA":"RO","RORAIMA":"RR","SANTA CATARINA":"SC","SÃO PAULO":"SP","SERGIPE":"SE","TOCANTINS":"TO"
     }
     raw = pd.read_excel(path, engine="odf", skiprows=6)
-
-    # nomes originais podem variar; usamos estes (iguais aos arquivos que você enviou)
     ren = {
         "UF":"UF_COD_NUM",
         "Nome_UF":"UF_NOME",
         "Código Município Completo":"MUNICIPIO_CODIGO",
         "Nome_Município":"MUNICIPIO_NOME"
     }
-    # se colunas faltarem, tenta fallback com normalização
     if not set(ren.keys()).issubset(raw.columns):
         norm = {c: nrm(c) for c in raw.columns}
         inv  = {v:k for k,v in norm.items()}
@@ -88,7 +80,6 @@ def carrega_dtb(path: str) -> pd.DataFrame:
             inv.get("CODIGO MUNICIPIO COMPLETO","Código Município Completo"): "MUNICIPIO_CODIGO",
             inv.get("NOME_MUNICIPIO","Nome_Município"): "MUNICIPIO_NOME",
         }
-
     dtb = (raw.rename(columns=ren)[["UF_NOME","MUNICIPIO_CODIGO","MUNICIPIO_NOME"]]
             .dropna(subset=["UF_NOME","MUNICIPIO_CODIGO","MUNICIPIO_NOME"]))
     dtb["UF_SIGLA"]         = dtb["UF_NOME"].astype(str).str.upper().map(UF_SIGLAS)
@@ -104,7 +95,6 @@ def carrega_alpargatas(path: str) -> pd.DataFrame:
     xls = pd.ExcelFile(path)
     abas = [a for a in xls.sheet_names if any(str(ano) in a for ano in range(2020, 2026))]
     if not abas: raise RuntimeError("Nenhuma aba 2020–2025 encontrada em Dados_alpa.xlsx.")
-
     frames = []
     for aba in abas:
         nohdr = pd.read_excel(path, sheet_name=aba, header=None, nrows=400)
@@ -162,12 +152,11 @@ def _long_por_municipio_ano(df: pd.DataFrame, rotulo: str) -> pd.DataFrame:
     return long_.groupby(["CO_MUNICIPIO","ANO"], as_index=False)[rotulo].mean()
 
 # ============================
-# 5) Evasão (INEP) — com mapeamento amplo
+# 5) Evasão (INEP)
 # ============================
 def carrega_evasao(path: str) -> pd.DataFrame:
     df = pd.read_excel(path, header=8, engine="odf")
     df["CO_MUNICIPIO"] = to7(df["CO_MUNICIPIO"])
-    # colunas que costumam existir — seleciona só as presentes
     cols_desejadas = [
         "NO_REGIAO","NO_UF","CO_MUNICIPIO","NO_MUNICIPIO","NO_LOCALIZACAO","NO_DEPENDENCIA",
         "1_CAT3_CATFUN","1_CAT3_CATFUN_AI","1_CAT3_CATFUN_AF",
@@ -177,11 +166,9 @@ def carrega_evasao(path: str) -> pd.DataFrame:
     ]
     cols = [c for c in cols_desejadas if c in df.columns]
     df = df[cols].copy()
-
     mapa = {
         "1_CAT3_CATFUN": "EVASAO_FUNDAMENTAL",
         "1_CAT3_CATMED": "EVASAO_MEDIO",
-        # opcionais para análises futuras (mantemos se existirem)
         "1_CAT3_CATFUN_AI": "EVASAO_FUN_AI",
         "1_CAT3_CATFUN_AF": "EVASAO_FUN_AF",
         "1_CAT3_CATMED_01": "EVASAO_MED_1",
@@ -199,19 +186,13 @@ def carrega_evasao(path: str) -> pd.DataFrame:
 # ============================
 @st.cache_data(show_spinner=True)
 def build_data():
-    # Bases principais
     alpa = carrega_alpargatas(ARQ_ALP)
     dtb  = carrega_dtb(ARQ_DTB)
-
-    # Cruzamento mínimo (apenas cidades)
     base = alpa.merge(dtb, on=["MUNICIPIO_CHAVE","UF_SIGLA"], how="left")
-
-    # Hotfix Campina Grande se vier sem código
     mask = (base["MUNICIPIO_NOME_ALP"].str.contains("CAMPINA GRANDE", case=False, na=False)) & \
            (base["UF_SIGLA"]=="PB") & (base["MUNICIPIO_CODIGO"].isna())
     base.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
 
-    # Aprovação
     df_ini = pd.read_excel(ARQ_INICIAIS, header=9)
     df_fin = pd.read_excel(ARQ_FINAIS,   header=9)
     df_med = pd.read_excel(ARQ_EM,       header=9)
@@ -221,23 +202,18 @@ def build_data():
     med = media_por_municipio(df_med, "TAXA_APROVACAO_MEDIO")
 
     base["CO_MUNICIPIO"] = to7(base["MUNICIPIO_CODIGO"])
-    base = (base
-            .merge(ini, on="CO_MUNICIPIO", how="left")
-            .merge(fin, on="CO_MUNICIPIO", how="left")
-            .merge(med, on="CO_MUNICIPIO", how="left"))
+    base = (base.merge(ini, on="CO_MUNICIPIO", how="left")
+                .merge(fin, on="CO_MUNICIPIO", how="left")
+                .merge(med, on="CO_MUNICIPIO", how="left"))
 
-    # Evasão (fundamental + médio + extras)
     eva  = carrega_evasao(ARQ_EVASAO)
     base = base.merge(eva, on="CO_MUNICIPIO", how="left")
 
-    # Reprovação e Urgência (versão bruta)
     base["Reprovacao_Iniciais"] = (1 - pd.to_numeric(base["TAXA_APROVACAO_INICIAIS"], errors="coerce")) * 100
     base["Reprovacao_Finais"]   = (1 - pd.to_numeric(base["TAXA_APROVACAO_FINAIS"],  errors="coerce")) * 100
-
     for c in ["EVASAO_FUNDAMENTAL","EVASAO_MEDIO","Reprovacao_Iniciais","Reprovacao_Finais"]:
         base[c] = _num(base[c])
 
-    # Winsorização (IQR) nas 4 colunas que entram na urgência
     num_cols = ["EVASAO_FUNDAMENTAL","EVASAO_MEDIO","Reprovacao_Iniciais","Reprovacao_Finais"]
     q1 = base[num_cols].quantile(0.25, numeric_only=True)
     q3 = base[num_cols].quantile(0.75, numeric_only=True)
@@ -246,11 +222,9 @@ def build_data():
     high = q3 + 1.5*iqr
     for c in num_cols:
         base[c] = base[c].clip(lower=low[c], upper=high[c])
-
     base["Urgencia"] = base[num_cols].sum(axis=1, skipna=True)
-    urgentes = base.sort_values("Urgencia", ascending=False).head(20).copy()
 
-    # Evolução histórica (2005–2023) — só para os urgentes
+    # Evolução (2005–2023)
     evo_ini = _long_por_municipio_ano(df_ini, "APROVACAO_INICIAIS")
     evo_fin = _long_por_municipio_ano(df_fin, "APROVACAO_FINAIS")
     evo_med = _long_por_municipio_ano(df_med, "APROVACAO_MEDIO")
@@ -260,37 +234,37 @@ def build_data():
         ["APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO"]
     ].mean(axis=1, skipna=True)
 
-    # anexar UF/nome para chave
     dtb_lookup = dtb[["MUNICIPIO_CODIGO","UF_SIGLA","MUNICIPIO_NOME"]].rename(columns={"MUNICIPIO_CODIGO":"CO_MUNICIPIO"})
     dtb_lookup["CO_MUNICIPIO"] = to7(dtb_lookup["CO_MUNICIPIO"])
     evolucao = evolucao.merge(dtb_lookup, on="CO_MUNICIPIO", how="left")
     evolucao["MUNICIPIO_CHAVE"] = evolucao["MUNICIPIO_NOME"].apply(chave_municipio)
 
-    urgentes["MUNICIPIO_CHAVE"] = urgentes["MUNICIPIO_NOME_ALP"].apply(chave_municipio)
-    evolucao_filtrada = (evolucao.merge(
-        urgentes[["UF_SIGLA","MUNICIPIO_CHAVE"]].drop_duplicates(),
-        on=["UF_SIGLA","MUNICIPIO_CHAVE"], how="inner")
-        .sort_values(["UF_SIGLA","MUNICIPIO_NOME","ANO"]).reset_index(drop=True))
-
-    # preencher NaN por mediana do município (para gráficos mais estáveis)
-    cols_fill = ["APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO","APROVACAO_MEDIA_GERAL"]
-    for c in cols_fill:
-        evolucao_filtrada[c] = evolucao_filtrada.groupby("MUNICIPIO_CHAVE")[c].transform(
-            lambda x: x.fillna(x.median(skipna=True))
-        )
-
-    return base, urgentes, evolucao_filtrada
+    return base, evolucao
 
 # ============================
-# 7) UI — Streamlit
+# 7) UI — Streamlit (com filtro por UF)
 # ============================
 st.set_page_config(page_title="IA • Aprovação/Evasão", page_icon="📊", layout="wide")
 st.title("📊 Instituto Alpargatas — Painel de Municípios (sem SAIDA_DIR)")
 
 with st.spinner("Processando dados…"):
-    base, urgentes, evolucao_filtrada = build_data()
+    base_full, evolucao_full = build_data()
 
-# KPIs
+# -------- Sidebar: filtro por UF --------
+ufs = sorted([u for u in base_full["UF_SIGLA"].dropna().unique() if isinstance(u, str)])
+sel_ufs = st.sidebar.multiselect("Filtrar por UF", options=ufs, default=ufs)
+if len(sel_ufs) == 0:
+    st.sidebar.info("Selecione ao menos uma UF.")
+    sel_ufs = ufs
+
+# aplica filtro
+base = base_full[base_full["UF_SIGLA"].isin(sel_ufs)].copy()
+evolucao_filtrada = evolucao_full[evolucao_full["UF_SIGLA"].isin(sel_ufs)].copy()
+
+# recomputa Top 20 após filtro
+urgentes = base.sort_values("Urgencia", ascending=False).head(20).copy()
+
+# KPIs (filtrados)
 c1,c2,c3,c4 = st.columns(4)
 with c1: st.metric("Municípios (base)", f"{base['MUNICIPIO_CHAVE'].nunique()}")
 with c2: st.metric("Aprovação — Finais (média)", f"{(pd.to_numeric(base['TAXA_APROVACAO_FINAIS'], errors='coerce').mean()*100):.1f}%")
@@ -340,17 +314,20 @@ with tab2:
     )
 
 with tab3:
-    st.write("Baixe os CSVs gerados dinamicamente:")
+    st.write("Baixe os CSVs (respeitam o filtro de UF):")
     cA, cB, cC = st.columns(3)
     with cA:
-        st.download_button("⬇️ Base consolidada", base.to_csv(index=False).encode("utf-8"), file_name="base_consolidada.csv")
+        st.download_button("⬇️ Base consolidada (filtrada)", base.to_csv(index=False).encode("utf-8"),
+                           file_name="base_consolidada_filtrada.csv")
     with cB:
-        st.download_button("⬇️ Urgentes Top20", urgentes.to_csv(index=False).encode("utf-8"), file_name="urgentes_top20.csv")
+        st.download_button("⬇️ Urgentes Top20 (filtrado)", urgentes.to_csv(index=False).encode("utf-8"),
+                           file_name="urgentes_top20_filtrado.csv")
     with cC:
-        st.download_button("⬇️ Evolução (recorte)", evolucao_filtrada.to_csv(index=False).encode("utf-8"), file_name="evolucao_recorte.csv")
+        st.download_button("⬇️ Evolução (recorte filtrado)", evolucao_filtrada.to_csv(index=False).encode("utf-8"),
+                           file_name="evolucao_recorte_filtrado.csv")
 
 with tab4:
-    st.write("**Shapes**")
+    st.write("**Shapes** (após filtro)")
     st.write("base:", base.shape, "| urgentes:", urgentes.shape, "| evolucao_filtrada:", evolucao_filtrada.shape)
     st.write("Tipos (base):")
     st.code(str(base.dtypes))
