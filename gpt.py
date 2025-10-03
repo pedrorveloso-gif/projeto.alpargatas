@@ -1,31 +1,32 @@
-# streamlit_app.py
-# App único (sem SAIDA_DIR). Requer: pandas, numpy, plotly, streamlit, odfpy, openpyxl
+# gpt.py — App Streamlit único (Instituto Alpargatas)
+# Requer: streamlit, pandas, numpy, plotly, odfpy, openpyxl
+
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl.worksheet._reader")
 
 import pandas as pd
 import numpy as np
-import unicodedata, re
-import plotly.express as px
+import unicodedata, re, traceback
+from pathlib import Path
 import streamlit as st
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl.worksheet._reader")
+import plotly.express as px
 
 # ============================
 # 0) CAMINHOS (relativos ao repo)
 # ============================
-ARQ_ALP = "dados/Dados_alpa.xlsx"
-ARQ_DTB = "dados/dtb_municipios.ods"
+ARQ_ALP      = "dados/Dados_alpa.xlsx"
+ARQ_DTB      = "dados/dtb_municipios.ods"
 ARQ_INICIAIS = "dados/anos_iniciais.xlsx"
 ARQ_FINAIS   = "dados/anos_finais.xlsx"
 ARQ_EM       = "dados/ensino_medio.xlsx"
 ARQ_EVASAO   = "dados/evasao.ods"
 
-# =========================================================
-# 1) Utilitários curtos
-# =========================================================
+# ============================
+# 1) Helpers
+# ============================
 def nrm(txt: object) -> str:
     if pd.isna(txt): return ""
-    s = str(txt)
-    s = unicodedata.normalize("NFKD", s).encode("ASCII","ignore").decode("ASCII")
+    s = unicodedata.normalize("NFKD", str(txt)).encode("ASCII","ignore").decode("ASCII")
     return s.upper().strip()
 
 def chave_municipio(nome: str) -> str:
@@ -45,9 +46,9 @@ def acha_linha_header_cidades_uf(df_no_header: pd.DataFrame) -> int | None:
 def to7(s: pd.Series) -> pd.Series:
     return s.astype(str).str.extract(r"(\d{7})", expand=False).str.zfill(7)
 
-def _num(s: pd.Series) -> pd.Series:  # trata %, vírgula, etc.
+def _num(s: pd.Series) -> pd.Series:
     return pd.to_numeric(
-        s.astype(str).str.replace("%","",regex=False).str.replace(",",".",regex=False),
+        s.astype(str).str.replace("%","",regex=False).str.replace(",","." ,regex=False),
         errors="coerce"
     )
 
@@ -55,49 +56,76 @@ def _minmax(s: pd.Series) -> pd.Series:
     s = pd.to_numeric(s, errors="coerce")
     return (s - s.min())/(s.max()-s.min()) if s.max()!=s.min() else pd.Series(0.5, index=s.index)
 
-# =========================================================
+def _nrm_header(s: object) -> str:
+    if pd.isna(s): return ""
+    t = unicodedata.normalize("NFKD", str(s)).encode("ASCII","ignore").decode("ASCII")
+    return re.sub(r"\s+"," ", t).strip().upper()
+
+# ============================
 # 2) Leitura de bases
-# =========================================================
+# ============================
 def carrega_dtb(path: str) -> pd.DataFrame:
-    UF_SIGLAS = {
-        "ACRE":"AC","ALAGOAS":"AL","AMAPÁ":"AP","AMAZONAS":"AM","BAHIA":"BA",
-        "CEARÁ":"CE","DISTRITO FEDERAL":"DF","ESPÍRITO SANTO":"ES","GOIÁS":"GO",
-        "MARANHÃO":"MA","MATO GROSSO":"MT","MATO GROSSO DO SUL":"MS","MINAS GERAIS":"MG",
-        "PARÁ":"PA","PARAÍBA":"PB","PARANÁ":"PR","PERNAMBUCO":"PE","PIAUÍ":"PI",
-        "RIO DE JANEIRO":"RJ","RIO GRANDE DO NORTE":"RN","RIO GRANDE DO SUL":"RS",
-        "RONDÔNIA":"RO","RORAIMA":"RR","SANTA CATARINA":"SC","SÃO PAULO":"SP","SERGIPE":"SE","TOCANTINS":"TO"
+    raw = pd.read_excel(path, engine="odf")
+    norm_map = {_nrm_header(c): c for c in raw.columns}
+    want = {
+        "UF_NOME": ["NOME UF","NOME_UF","UF NOME","UF - NOME","NOME DA UF","UF"],
+        "MUNICIPIO_CODIGO": [
+            "CODIGO MUNICIPIO COMPLETO","CÓDIGO MUNICIPIO COMPLETO",
+            "CODIGO DO MUNICIPIO","CODIGO MUNICIPIO","COD MUNICIPIO"
+        ],
+        "MUNICIPIO_NOME": ["NOME MUNICIPIO","NOME DO MUNICIPIO","NOME_MUNICIPIO","MUNICIPIO","MUNICÍPIO"]
     }
-    raw = pd.read_excel(path, engine="odf", skiprows=6)
-    dtb = (raw.rename(columns={
-            "UF":"UF_COD_NUM","Nome_UF":"UF_NOME",
-            "Código Município Completo":"MUNICIPIO_CODIGO",
-            "Nome_Município":"MUNICIPIO_NOME"
-        })[["UF_NOME","MUNICIPIO_CODIGO","MUNICIPIO_NOME"]]
-        .dropna())
+    def _pick(keys):
+        for k in keys:
+            kn = _nrm_header(k)
+            if kn in norm_map: return norm_map[kn]
+            cand = [norm_map[x] for x in norm_map if x.startswith(kn)]
+            if cand: return cand[0]
+        return None
+
+    c_uf  = _pick(want["UF_NOME"])
+    c_cod = _pick(want["MUNICIPIO_CODIGO"])
+    c_nom = _pick(want["MUNICIPIO_NOME"])
+    missing = [n for n,v in {"UF_NOME":c_uf,"MUNICIPIO_CODIGO":c_cod,"MUNICIPIO_NOME":c_nom}.items() if v is None]
+    if missing:
+        raise KeyError(f"DTB: não encontrei colunas {missing}. Disponíveis: {list(raw.columns)}")
+
+    dtb = raw[[c_uf,c_cod,c_nom]].rename(columns={c_uf:"UF_NOME", c_cod:"MUNICIPIO_CODIGO", c_nom:"MUNICIPIO_NOME"}).dropna()
+    UF_SIGLAS = {
+        "ACRE":"AC","ALAGOAS":"AL","AMAPA":"AP","AMAPÁ":"AP","AMAZONAS":"AM","BAHIA":"BA",
+        "CEARA":"CE","CEARÁ":"CE","DISTRITO FEDERAL":"DF","ESPIRITO SANTO":"ES","ESPÍRITO SANTO":"ES",
+        "GOIAS":"GO","GOIÁS":"GO","MARANHAO":"MA","MARANHÃO":"MA","MATO GROSSO":"MT",
+        "MATO GROSSO DO SUL":"MS","MINAS GERAIS":"MG","PARA":"PA","PARÁ":"PA","PARAIBA":"PB","PARAÍBA":"PB",
+        "PARANA":"PR","PARANÁ":"PR","PERNAMBUCO":"PE","PIAUI":"PI","PIAUÍ":"PI","RIO DE JANEIRO":"RJ",
+        "RIO GRANDE DO NORTE":"RN","RIO GRANDE DO SUL":"RS","RONDONIA":"RO","RONDÔNIA":"RO",
+        "RORAIMA":"RR","SANTA CATARINA":"SC","SAO PAULO":"SP","SÃO PAULO":"SP","SERGIPE":"SE","TOCANTINS":"TO"
+    }
     dtb["UF_SIGLA"]         = dtb["UF_NOME"].astype(str).str.upper().map(UF_SIGLAS)
-    dtb["MUNICIPIO_CODIGO"] = dtb["MUNICIPIO_CODIGO"].astype(str).str.zfill(7)
+    dtb["MUNICIPIO_CODIGO"] = dtb["MUNICIPIO_CODIGO"].astype(str).str.extract(r"(\d{7})", expand=False).str.zfill(7)
     dtb["MUNICIPIO_NOME"]   = dtb["MUNICIPIO_NOME"].astype(str).str.upper().str.strip()
     dtb["MUNICIPIO_CHAVE"]  = dtb["MUNICIPIO_NOME"].apply(chave_municipio)
+    if dtb["UF_SIGLA"].isna().all():
+        raise ValueError("DTB: falha no mapeamento de UF — ver coluna UF_NOME.")
     return dtb[["UF_SIGLA","MUNICIPIO_CODIGO","MUNICIPIO_NOME","MUNICIPIO_CHAVE"]]
 
 def carrega_alpargatas(path: str) -> pd.DataFrame:
-    xls = pd.ExcelFile(path)
+    xls = pd.ExcelFile(path, engine="openpyxl")
     abas = [a for a in xls.sheet_names if any(str(ano) in a for ano in range(2020, 2026))]
     if not abas:
-        raise RuntimeError("Nenhuma aba 2020–2025 encontrada no arquivo Alpargatas.")
+        raise RuntimeError("Nenhuma aba 2020–2025 encontrada em Dados_alpa.xlsx.")
     frames = []
     for aba in abas:
-        nohdr = pd.read_excel(path, sheet_name=aba, header=None, nrows=400)
+        nohdr = pd.read_excel(path, sheet_name=aba, header=None, nrows=400, engine="openpyxl")
         hdr = acha_linha_header_cidades_uf(nohdr)
         if hdr is None:
-            st.warning(f"Header CIDADES/UF não encontrado na aba '{aba}'. Pulando…")
+            st.warning(f"Aba '{aba}': cabeçalho com CIDADES/UF não encontrado. Pulando…")
             continue
-        df = pd.read_excel(path, sheet_name=aba, header=hdr)
+        df = pd.read_excel(path, sheet_name=aba, header=hdr, engine="openpyxl")
         cmap = {c: nrm(c) for c in df.columns}
         c_cid = next((orig for orig, norm in cmap.items() if norm=="CIDADES"), None)
         c_uf  = next((orig for orig, norm in cmap.items() if norm=="UF"), None)
         if not c_cid or not c_uf:
-            st.warning(f"Colunas 'CIDADES'/'UF' ausentes na aba '{aba}'. Pulando…")
+            st.warning(f"Aba '{aba}': colunas 'CIDADES'/'UF' ausentes. Pulando…")
             continue
         tmp = (df[[c_cid,c_uf]].copy()
                  .rename(columns={c_cid:"MUNICIPIO_NOME_ALP", c_uf:"UF_SIGLA"}))
@@ -113,17 +141,15 @@ def carrega_alpargatas(path: str) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True).drop_duplicates(["MUNICIPIO_CHAVE","UF_SIGLA"])
 
 def cruzar(dtb: pd.DataFrame, alpa: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    codificados = alpa.merge(
-        dtb, on=["MUNICIPIO_CHAVE","UF_SIGLA"], how="left", suffixes=("_ALP","_IBGE")
-    )
+    codificados = alpa.merge(dtb, on=["MUNICIPIO_CHAVE","UF_SIGLA"], how="left", suffixes=("_ALP","_IBGE"))
     nao_encontrados = (codificados[codificados["MUNICIPIO_CODIGO"].isna()]
                        .drop_duplicates(subset=["MUNICIPIO_NOME_ALP","UF_SIGLA"])
                        .sort_values(["UF_SIGLA","MUNICIPIO_NOME_ALP"]))
     return codificados, nao_encontrados
 
-# =========================================================
-# 3) Funções para evolução/indicadores
-# =========================================================
+# ============================
+# 3) Evolução / Indicadores
+# ============================
 def media_por_municipio(df: pd.DataFrame, rotulo: str) -> pd.DataFrame:
     out = pd.DataFrame({
         "CO_MUNICIPIO": to7(df["CO_MUNICIPIO"]),
@@ -150,6 +176,8 @@ def _long_por_municipio_ano(df: pd.DataFrame, rotulo: str) -> pd.DataFrame:
     t = df.copy()
     t["CO_MUNICIPIO"] = to7(t["CO_MUNICIPIO"])
     anos = _anos_disponiveis(t, 2005, 2023)
+    if not anos:
+        raise KeyError("Planilha sem colunas VL_INDICADOR_REND_YYYY (2005–2023).")
     cols = [f"VL_INDICADOR_REND_{a}" for a in anos]
     for c in cols: t[c] = pd.to_numeric(t[c], errors="coerce")
     long_ = t[["CO_MUNICIPIO"] + cols].melt("CO_MUNICIPIO", value_name=rotulo)
@@ -157,25 +185,36 @@ def _long_por_municipio_ano(df: pd.DataFrame, rotulo: str) -> pd.DataFrame:
     long_.drop(columns="variable", inplace=True)
     return long_.groupby(["CO_MUNICIPIO","ANO"], as_index=False)[rotulo].mean()
 
-# =========================================================
-# 4) Pipeline cacheado
-# =========================================================
+# ============================
+# 4) Sidebar: diagnóstico
+# ============================
+def _diag_arquivos():
+    base = Path(__file__).parent
+    dados = base / "dados"
+    st.sidebar.subheader("🧪 Diagnóstico")
+    st.sidebar.write("Diretório:", str(base))
+    st.sidebar.write("Conteúdo de `dados/`:",
+                     [p.name for p in sorted(dados.glob("*"))] if dados.exists() else "pasta não encontrada")
+    for nome, rel in {"ARQ_ALP":ARQ_ALP,"ARQ_DTB":ARQ_DTB,"ARQ_INICIAIS":ARQ_INICIAIS,
+                      "ARQ_FINAIS":ARQ_FINAIS,"ARQ_EM":ARQ_EM,"ARQ_EVASAO":ARQ_EVASAO}.items():
+        st.sidebar.write(f"{nome} → {'OK' if (base/rel).exists() else 'FALTA'}")
+
+# ============================
+# 5) Pipeline
+# ============================
 @st.cache_data(show_spinner=True)
 def build_data():
-    # DTB + Alpargatas
-    dtb = carrega_dtb(ARQ_DTB)
+    dtb  = carrega_dtb(ARQ_DTB)
     alpa = carrega_alpargatas(ARQ_ALP)
     codificados, _nao = cruzar(dtb, alpa)
 
-    # hotfix Campina Grande
     mask = (codificados["MUNICIPIO_NOME_ALP"].str.contains("CAMPINA GRANDE", case=False, na=False)) & \
            (codificados["UF_SIGLA"]=="PB") & (codificados["MUNICIPIO_CODIGO"].isna())
     codificados.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
 
-    # Aprovação (INEP)
-    df_ini = pd.read_excel(ARQ_INICIAIS, header=9)
-    df_fin = pd.read_excel(ARQ_FINAIS,   header=9)
-    df_med = pd.read_excel(ARQ_EM,       header=9)
+    df_ini = pd.read_excel(ARQ_INICIAIS, header=9, engine="openpyxl")
+    df_fin = pd.read_excel(ARQ_FINAIS,   header=9, engine="openpyxl")
+    df_med = pd.read_excel(ARQ_EM,       header=9, engine="openpyxl")
 
     ini = media_por_municipio(df_ini, "TAXA_APROVACAO_INICIAIS")
     fin = media_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS")
@@ -194,19 +233,16 @@ def build_data():
         df_eva = pd.read_excel(ARQ_EVASAO, header=8, engine="odf")
     else:
         df_eva = pd.read_excel(ARQ_EVASAO, header=8)
-
     cols_pick = ["NO_REGIAO","NO_UF","CO_MUNICIPIO","NO_MUNICIPIO","NO_LOCALIZACAO","NO_DEPENDENCIA",
                  "1_CAT3_CATFUN","1_CAT3_CATMED"]
     cols_pick = [c for c in cols_pick if c in df_eva.columns]
-    eva = df_eva[cols_pick].rename(columns={
-        "1_CAT3_CATFUN":"EVASAO_FUNDAMENTAL",
-        "1_CAT3_CATMED":"EVASAO_MEDIO"
-    }).copy()
+    eva = (df_eva[cols_pick]
+           .rename(columns={"1_CAT3_CATFUN":"EVASAO_FUNDAMENTAL","1_CAT3_CATMED":"EVASAO_MEDIO"})
+           .copy())
     eva["CO_MUNICIPIO"] = to7(eva["CO_MUNICIPIO"])
     for c in ["EVASAO_FUNDAMENTAL","EVASAO_MEDIO"]:
         if c in eva.columns: eva[c] = _num(eva[c])
 
-    # Merge + urgência
     res2 = res.merge(eva, left_on="MUNICIPIO_CODIGO", right_on="CO_MUNICIPIO", how="left")
     res2["Reprovacao_Iniciais"] = (1 - pd.to_numeric(res2["TAXA_APROVACAO_INICIAIS"], errors="coerce")) * 100
     res2["Reprovacao_Finais"]   = (1 - pd.to_numeric(res2["TAXA_APROVACAO_FINAIS"],  errors="coerce")) * 100
@@ -222,9 +258,7 @@ def build_data():
     evo_med = _long_por_municipio_ano(df_med, "APROVACAO_MEDIO")
     evolucao = (evo_ini.merge(evo_fin, on=["CO_MUNICIPIO","ANO"], how="outer")
                        .merge(evo_med, on=["CO_MUNICIPIO","ANO"], how="outer"))
-    evolucao["APROVACAO_MEDIA_GERAL"] = evolucao[
-        ["APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO"]
-    ].mean(axis=1, skipna=True)
+    evolucao["APROVACAO_MEDIA_GERAL"] = evolucao[["APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO"]].mean(axis=1, skipna=True)
 
     # Anexar UF + nome e filtrar pelos urgentes
     dtb_lookup = dtb[["MUNICIPIO_CODIGO","UF_SIGLA","MUNICIPIO_NOME"]].rename(columns={"MUNICIPIO_CODIGO":"CO_MUNICIPIO"})
@@ -240,14 +274,20 @@ def build_data():
 
     return res2, urgentes, evolucao_filtrada
 
-# =========================================================
-# 5) UI
-# =========================================================
+# ============================
+# 6) UI
+# ============================
 st.set_page_config(page_title="IA • Aprovação/Evasão", page_icon="📊", layout="wide")
-st.title("📊 Instituto Alpargatas — Painel (sem SAIDA_DIR)")
+st.title("📊 Instituto Alpargatas — Painel")
+_diag_arquivos()
 
 with st.spinner("Processando dados…"):
-    base, urgentes, evolucao_filtrada = build_data()
+    try:
+        base, urgentes, evolucao_filtrada = build_data()
+    except Exception:
+        st.error("❌ Erro ao montar os dados. Stack trace abaixo:")
+        st.code(traceback.format_exc())
+        st.stop()
 
 c1,c2,c3,c4 = st.columns(4)
 with c1: st.metric("Municípios (base)", f"{base['MUNICIPIO_CODIGO'].nunique()}")
@@ -265,8 +305,7 @@ with tab1:
     ]], use_container_width=True)
 
     st.subheader("Evolução (recorte dos urgentes)")
-    show_cols = ["UF_SIGLA","MUNICIPIO_NOME","ANO",
-                 "APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO","APROVACAO_MEDIA_GERAL"]
+    show_cols = ["UF_SIGLA","MUNICIPIO_NOME","ANO","APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO","APROVACAO_MEDIA_GERAL"]
     st.dataframe(evolucao_filtrada[show_cols], use_container_width=True)
 
 with tab2:
