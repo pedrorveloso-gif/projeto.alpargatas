@@ -148,9 +148,10 @@ def carrega_dtb(path: str) -> pd.DataFrame:
     
     try:
         if is_ods:
-             # MUDANÇA: engine='odf' adicionado explicitamente para ODS
+             # Leitura ODS
             raw = pd.read_excel(path, skiprows=6, engine='odf')
         else:
+            # Leitura XLSX
             raw = pd.read_excel(path, skiprows=6) 
         
         return _processa_dtb(raw, UF_SIGLAS)
@@ -159,7 +160,7 @@ def carrega_dtb(path: str) -> pd.DataFrame:
         st.error(f"Arquivo DTB não encontrado: {path}")
         return pd.DataFrame()
     except Exception as e:
-        # Tenta fallback se o erro for de ODS/XLSX
+        # Tenta fallback se o erro for de ODS/XLSX (MANTIDO para o caso de erro de leitura do arquivo)
         if is_ods:
             st.error(f"Erro ao ler DTB ODS. Verifique se 'odfpy' está no requirements.txt. Erro: {e}")
         else:
