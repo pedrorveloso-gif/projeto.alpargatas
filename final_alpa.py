@@ -130,7 +130,7 @@ def carrega_alpargatas(path: str) -> pd.DataFrame:
 # =========================================================
 # 4) Cruzamento e saída
 # =========================================================
-def cruzar_e_salvar(dtb: pd.DataFrame, alpa: pd.DataFrame, saida_dir: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+def cruzar_e_salvar(dtb: pd.DataFrame, alpa: pd.DataFrame | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Casa Alpargatas × IBGE usando (MUNICIPIO_CHAVE, UF_SIGLA).
     Se 'saida_dir' for informado, salva CSVs.
@@ -144,10 +144,6 @@ def cruzar_e_salvar(dtb: pd.DataFrame, alpa: pd.DataFrame, saida_dir: str | None
                        .drop_duplicates(subset=["MUNICIPIO_NOME_ALP","UF_SIGLA"])
                        .sort_values(["UF_SIGLA","MUNICIPIO_NOME_ALP"]))
 
-    if saida_dir:
-        Path(saida_dir).mkdir(parents=True, exist_ok=True)
-        codificados.to_csv(Path(saida_dir, "municipios_alpargatas_codificados.csv"), index=False, encoding="utf-8")
-        nao_encontrados.to_csv(Path(saida_dir, "municipios_nao_encontrados_para_tratar.csv"), index=False, encoding="utf-8")
 
     return codificados, nao_encontrados
 
@@ -224,9 +220,9 @@ def media_por_municipio(df: pd.DataFrame, rotulo_saida: str) -> pd.DataFrame:
 #    - ensino médio
 #    Cada uma com a coluna "CO_MUNICIPIO" + "TAXA_APROVACAO_<ETAPA>_P"
 
-ini = media_por_municipio(df_iniciais, "TAXA_APROVACAO_INICIAIS_P")
-fin = media_por_municipio(df_finais,   "TAXA_APROVACAO_FINAIS_P")
-med = media_por_municipio(df_em,       "TAXA_APROVACAO_MEDIO_P")
+ini = media_por_municipio(df_iniciais,"TAXA_APROVACAO_INICIAIS_P")
+fin = media_por_municipio(df_finais, "TAXA_APROVACAO_FINAIS_P")
+med = media_por_municipio(df_em, "TAXA_APROVACAO_MEDIO_P")
 
 # ============================================================
 # Cria também colunas em percentual
@@ -1340,6 +1336,7 @@ with tab_diag:
     _diag(df_static_ready, "df_static_ready")
     _diag(evo_safe, "evolucao_filtrada")
     _diag(urg_safe, "urgentes")
+
 
 
 
