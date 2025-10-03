@@ -241,6 +241,27 @@ med["TAXA_APROVACAO_MEDIO_%"]    = med["TAXA_APROVACAO_MEDIO_P"]    * 100
 #    - junta (left) as médias calculadas de cada etapa por código IBGE
 #    - remove colunas duplicadas de CO_MUNICIPIO criadas pelos merges
 # ============================================================
+# --- GUARDA: garante que 'codificados' existe em memória ---
+def _build_codificados():
+    dtb  = carrega_dtb(ARQ_DTB)
+    alpa = carrega_alpargatas(ARQ_ALP)
+    cod, nao = cruzar_e_salvar(dtb, alpa)
+
+    # ajuste CAMPINA GRANDE (PB)
+    mask = (
+        cod["MUNICIPIO_NOME_ALP"].astype(str).str.contains("CAMPINA GRANDE", case=False, na=False, regex=False)
+        & (cod["UF_SIGLA"] == "PB")
+        & (cod["MUNICIPIO_CODIGO"].isna())
+    )
+    cod.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
+    cod = cod.drop(columns=["MUNICIPIO_NOME_IBGE"], errors="ignore")
+    return cod
+
+try:
+    codificados  # verifica se já existe
+except NameError:
+    codificados = _build_codificados()
+
 res = codificados.copy()
 
 # 3.1) Padroniza o código do município na base principal
@@ -1319,6 +1340,7 @@ with tab_diag:
     _diag(df_static_ready, "df_static_ready")
     _diag(evo_safe, "evolucao_filtrada")
     _diag(urg_safe, "urgentes")
+
 
 
 
