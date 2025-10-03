@@ -9,10 +9,10 @@ import streamlit as st
 # ============================
 # 0) Arquivos (mesmo diretório/ subpasta do repo)
 # ============================
-ARQ_INICIAIS = "anos_iniciais.xlsx"
-ARQ_FINAIS   = "anos_finais.xlsx"
-ARQ_MEDIO    = "ensino_medio.xlsx"
-ARQ_EVASAO   = "evasao.ods"     # .ods → odfpy
+ARQ_INICIAIS = "dados/anos_iniciais.xlsx"
+ARQ_FINAIS   = "dados/anos_finais.xlsx"
+ARQ_MEDIO    = "dados/ensino_medio.xlsx"
+ARQ_EVASAO   = "dados/evasao.ods"     # .ods → odfpy
 
 # ============================
 # 1) Cidades alvo (SEM Mixing Center)
