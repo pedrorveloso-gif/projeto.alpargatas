@@ -13,13 +13,14 @@ import streamlit as st
 # ============================
 # 0) AJUSTE OS CAMINHOS AQUI
 # ============================
-ARQ_ALP = "dados/Projetos_de_Atuacao_-_IA_-_2020_a_2025.xlsx"
+ARQ_ALP = "dados/Projetos_de_Atuac807a771o_-_IA_-_2020_a_2025 (1).xlsx"
 ARQ_DTB = "dados/RELATORIO_DTB_BRASIL_2024_MUNICIPIOS.ods"
 
 ods_iniciais = "dados/divulgacao_anos_iniciais_municipios_2023.xlsx"
 ods_finais   = "dados/divulgacao_anos_finais_municipios_2023.xlsx"
 ods_em       = "dados/divulgacao_ensino_medio_municipios_2023.xlsx"
 caminho_evasao = "dados/TX_TRANSICAO_MUNICIPIOS_2021_2022.ods"
+
 
 # =========================================================
 # 1) Utilitários
