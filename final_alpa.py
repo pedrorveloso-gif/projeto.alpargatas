@@ -102,18 +102,7 @@ def _read_inep(path: str, headers_try=(9, 8, 7, 0)) -> pd.DataFrame:
     raise last_err if last_err else FileNotFoundError(path)
 
 
-# ============================
-# Cálculos por planilha (Aprovação)
-# ============================
 def medias_atual_e_hist(df: pd.DataFrame, rotulo_prefix: str) -> tuple[pd.DataFrame, int]:
-    """
-    Calcula, para UMA planilha (Iniciais/Finais/Médio):
-      - aprovação ATUAL (ano mais recente encontrado)
-      - aprovação HISTÓRICA (média de todos os anos ≠ ano mais recente)
-    Retorna (df_out, ano_recente):
-      df_out: CO_MUNICIPIO, <prefix>_P, <prefix>_%, <prefix>_HIST_P, <prefix>_HIST_%
-      (P = proporção 0–1; % = 0–100)
-    """
     df = df.copy()
     col_cod = _find_col(df, ["CO MUNICIPIO", "CODIGO DO MUNICIPIO", "CODIGO MUNICIPIO", "CO_MUNICIPIO"])
     if not col_cod:
@@ -129,7 +118,6 @@ def medias_atual_e_hist(df: pd.DataFrame, rotulo_prefix: str) -> tuple[pd.DataFr
     col_atual = mapa[ano_recente]
     cols_hist = [mapa[a] for a in mapa if a != ano_recente]
     if not cols_hist:
-        # Se só existir um ano, tratamos histórico = atual (evita df vazio)
         cols_hist = [col_atual]
 
     usar_cols = [col_atual] + cols_hist
@@ -137,17 +125,15 @@ def medias_atual_e_hist(df: pd.DataFrame, rotulo_prefix: str) -> tuple[pd.DataFr
     for c in usar_cols:
         num[c] = pd.to_numeric(num[c], errors="coerce")
 
-    grp = num.groupby(col_cod, as_index=False)[usar_cols].mean(skipna=True)
+    # <- removido skipna=True
+    grp = num.groupby(col_cod, as_index=False)[usar_cols].mean()
 
     out = grp[[col_cod]].copy()
     out[f"{rotulo_prefix}_P"] = grp[col_atual]
     out[f"{rotulo_prefix}_HIST_P"] = grp[cols_hist].mean(axis=1, skipna=True)
 
-    # versões em %
     out[f"{rotulo_prefix}_%"] = (out[f"{rotulo_prefix}_P"] * 100).round(2)
     out[f"{rotulo_prefix}_HIST_%"] = (out[f"{rotulo_prefix}_HIST_P"] * 100).round(2)
-
-    # arredonda as proporções
     out[f"{rotulo_prefix}_P"] = out[f"{rotulo_prefix}_P"].round(4)
     out[f"{rotulo_prefix}_HIST_P"] = out[f"{rotulo_prefix}_HIST_P"].round(4)
 
@@ -155,10 +141,6 @@ def medias_atual_e_hist(df: pd.DataFrame, rotulo_prefix: str) -> tuple[pd.DataFr
 
 
 def long_por_municipio_ano(df: pd.DataFrame, etapa_rotulo: str) -> pd.DataFrame:
-    """
-    Converte uma planilha (iniciais/finais/médio) para formato longo:
-    colunas: CO_MUNICIPIO, ANO, <etapa_rotulo> (proporção 0–1) — média por município/ano.
-    """
     df = df.copy()
     col_cod = _find_col(df, ["CO MUNICIPIO", "CODIGO DO MUNICIPIO", "CODIGO MUNICIPIO", "CO_MUNICIPIO"])
     if not col_cod:
@@ -178,9 +160,10 @@ def long_por_municipio_ano(df: pd.DataFrame, etapa_rotulo: str) -> pd.DataFrame:
     long_df["ANO"] = long_df["COL"].str.extract(r"(\d{4})").astype(int)
     long_df.drop(columns=["COL"], inplace=True)
 
-    long_grp = (long_df.groupby([col_cod, "ANO"], as_index=False)[etapa_rotulo]
-                        .mean(skipna=True))
+    # <- removido skipna=True
+    long_grp = long_df.groupby([col_cod, "ANO"], as_index=False)[etapa_rotulo].mean()
     return long_grp.rename(columns={col_cod: "CO_MUNICIPIO"})
+
 
 
 # ============================
@@ -438,3 +421,4 @@ st.plotly_chart(
 st.caption("Obs.: Urgência = Evasão(Fund + Médio) + Reprovação(Iniciais + Finais). "
            "Aprovações 'Atual' usam o ano mais recente detectado nos arquivos; "
            "Histórico = média de todos os anos disponíveis, exceto o mais recente.")
+
