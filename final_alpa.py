@@ -159,19 +159,13 @@ def cruzar_e_salvar(dtb: pd.DataFrame, alpa: pd.DataFrame, saida_dir: str) -> tu
 # =========================================================
 # 5) Execução
 # =========================================================
+
 if __name__ == "__main__":
     print("Lendo DTB/IBGE…")
     dtb  = carrega_dtb(ARQ_DTB)
 
     print("Lendo abas do arquivo Alpargatas…")
     alpa = carrega_alpargatas(ARQ_ALP)
-
-    print("Cruzando e salvando…")
-    codificados, nao_encontrados = cruzar_e_salvar(dtb, alpa)
-
-    # Visão rápida (opcional)
-    print("\nAmostra codificados:")
-    print(codificados.head(10).to_string(index=False))
 
 # Adicionar manualmente o código de CAMPINA GRANDE (PB) se estiver NaN
 mask = (codificados["MUNICIPIO_NOME_ALP"].str.contains("CAMPINA GRANDE", case=False, na=False)) & \
@@ -1328,6 +1322,7 @@ with tab_diag:
     _diag(df_static_ready, "df_static_ready")
     _diag(evo_safe, "evolucao_filtrada")
     _diag(urg_safe, "urgentes")
+
 
 
 
