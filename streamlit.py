@@ -13,15 +13,16 @@ st.title("📊 Instituto Alpargatas — Painel")
 st.caption("Análise de dados de aprovação, evasão e urgência educacional.")
 
 # ============================
-# 0) AJUSTE OS CAMINHOS AQUI
-#    NOTE: Os arquivos DEVEM estar disponíveis para o Streamlit rodar!
+# 0) AJUSTE OS CAMINHOS AQUI (TODOS EM .xlsx ou caminho estável)
 # ============================
 ARQ_ALP = "dados/Projetos_de_Atuac807a771o_-_IA_-_2020_a_2025 (1).xlsx"
-ARQ_DTB = "dados/RELATORIO_DTB_BRASIL_2024_MUNICIPIOS.ods"
+# MUDANÇA: ARQUIVO DTB AGORA É XLSX
+ARQ_DTB = "dados/RELATORIO_DTB_BRASIL_2024_MUNICIPIOS.xlsx" 
 ODS_INICIAIS = "dados/divulgacao_anos_iniciais_municipios_2023.xlsx"
 ODS_FINAIS = "dados/divulgacao_anos_finais_municipios_2023.xlsx"
 ODS_EM = "dados/divulgacao_ensino_medio_municipios_2023.xlsx"
-CAMINHO_EVASAO = "dados/TX_TRANSICAO_MUNICIPIOS_2021_2022.ods"
+# MUDANÇA: ARQUIVO EVASÃO AGORA É XLSX
+CAMINHO_EVASAO = "dados/TX_TRANSICAO_MUNICIPIOS_2021_2022.xlsx" 
 
 # =========================================================
 # 1) Utilitários (Funções auxiliares sem St.cache)
@@ -116,6 +117,16 @@ def _minmax(s: pd.Series) -> pd.Series:
         return pd.Series(0.5, index=s.index)
     return (s - s_clean.min()) / (s_clean.max() - s_clean.min())
 
+def _to_num(x: pd.Series) -> pd.Series:
+    """Coerção robusta para numérico."""
+    return pd.to_numeric(
+        x.astype(str)
+         .str.replace("%","",regex=False)
+         .str.replace(",","",regex=False) 
+         .str.replace(" ","",regex=False),
+        errors="coerce"
+    )
+
 # =========================================================
 # 2) Funções de Carregamento e Processamento (Cache)
 # =========================================================
@@ -132,12 +143,13 @@ def carrega_dtb(path: str) -> pd.DataFrame:
                  "RONDÔNIA":"RO","RORAIMA":"RR","SANTA CATARINA":"SC","SÃO PAULO":"SP",
                  "SERGIPE":"SE","TOCANTINS":"TO"}
     try:
-        raw = pd.read_excel(path, engine="odf", skiprows=6)
+        # MUDANÇA: engine='odf' removido
+        raw = pd.read_excel(path, skiprows=6) 
     except FileNotFoundError:
         st.error(f"Arquivo DTB não encontrado: {path}")
         return pd.DataFrame()
     except Exception as e:
-        st.error(f"Erro ao ler DTB: {e}")
+        st.error(f"Erro ao ler DTB. Tente garantir que o arquivo é um XLSX válido: {e}")
         return pd.DataFrame()
 
     dtb = (raw.rename(columns={
@@ -175,20 +187,18 @@ def carrega_alpargatas(path: str) -> pd.DataFrame:
     frames = []
     for aba in abas:
         try:
-            # Tenta ler as primeiras linhas sem header
             nohdr = pd.read_excel(path, sheet_name=aba, header=None, nrows=400)
             hdr = acha_linha_header_cidades_uf(nohdr)
             if hdr is None:
-                continue # Pula a aba se não achar header
+                continue 
 
             df = pd.read_excel(path, sheet_name=aba, header=hdr)
 
-            # Descobre as colunas "Cidades" e "UF" em qualquer grafia
             cmap = {c: nrm(c) for c in df.columns}
             c_cid = next((orig for orig, norm in cmap.items() if norm == "CIDADES"), None)
             c_uf = next((orig for orig, norm in cmap.items() if norm == "UF"), None)
             if not c_cid or not c_uf:
-                continue # Pula a aba se não achar colunas
+                continue 
 
             tmp = (df[[c_cid, c_uf]].copy()
                     .rename(columns={c_cid:"MUNICIPIO_NOME_ALP", c_uf:"UF_SIGLA"}))
@@ -205,7 +215,7 @@ def carrega_alpargatas(path: str) -> pd.DataFrame:
             continue
 
     if not frames:
-        st.error("Nenhuma aba válida foi processada (CIDADES/UF não encontrado ou erro de leitura).")
+        st.error("Nenhuma aba válida foi processada.")
         return pd.DataFrame()
 
     return pd.concat(frames, ignore_index=True).drop_duplicates(["MUNICIPIO_CHAVE","UF_SIGLA"])
@@ -231,7 +241,6 @@ def build_codificados(dtb: pd.DataFrame, alpa: pd.DataFrame) -> tuple[pd.DataFra
                          .drop_duplicates(subset=["MUNICIPIO_NOME_ALP","UF_SIGLA"])
                          .sort_values(["UF_SIGLA","MUNICIPIO_NOME_ALP"]))
 
-    # Não salva arquivos CSVs, apenas retorna (Streamlit gerencia a interface)
     return codificados, nao_encontrados
 
 # --- Carregamento e fusão de dados de Aprovação (IDEB/INEP) ---
@@ -280,7 +289,6 @@ def build_taxas_aprovacao(codificados: pd.DataFrame, ini_path: str, fin_path: st
     for c in ["CO_MUNICIPIO", "CO_MUNICIPIO_fin", "CO_MUNICIPIO_med"]:
         if c in res.columns: res.drop(columns=c, inplace=True)
 
-    # Renomeia e remove colunas conforme a lógica original (simplificada)
     res = res.rename(columns=lambda x: x.replace("_P", "") if x.endswith("_P") else x)
     cols_remover = ["TAXA_APROVACAO_INICIAIS", "TAXA_APROVACAO_FINAIS", "TAXA_APROVACAO_MEDIO"]
     res = res.drop(columns=cols_remover, errors="ignore")
@@ -294,7 +302,8 @@ def build_evasao(taxas_aprovacao: pd.DataFrame, evasao_path: str) -> pd.DataFram
     if taxas_aprovacao.empty: return pd.DataFrame()
     
     try:
-        df_evasao = pd.read_excel(evasao_path, header = 8)
+        # MUDANÇA: assume .xlsx, removendo dependência de ODS/odfpy
+        df_evasao = pd.read_excel(evasao_path, header = 8) 
     except FileNotFoundError:
         st.error("Arquivo de Evasão não encontrado. Verifique o caminho.")
         return taxas_aprovacao
@@ -308,44 +317,32 @@ def build_evasao(taxas_aprovacao: pd.DataFrame, evasao_path: str) -> pd.DataFram
     mapa_colunas = {"1_CAT3_CATFUN": "Fundamental - Total", "1_CAT3_CATMED": "Médio - Total"}
     df_filtrado = df_filtrado.rename(columns=mapa_colunas)
 
-    # Garantir que as taxas de evasão sejam numéricas
     for col in ["Fundamental - Total", "Médio - Total"]:
         if col in df_filtrado.columns:
             df_filtrado[col] = pd.to_numeric(
                 df_filtrado[col].astype(str).str.replace(",", "."), errors="coerce"
             )
 
-    # Prepara para o merge: padroniza códigos
     res_ok = taxas_aprovacao.copy().dropna(subset=["MUNICIPIO_CODIGO"])
     df_filtrado_ok = df_filtrado.dropna(subset=["CO_MUNICIPIO"])
 
     res_ok["MUNICIPIO_CODIGO"] = pd.to_numeric(res_ok["MUNICIPIO_CODIGO"], errors="coerce").astype("Int64")
     df_filtrado_ok["CO_MUNICIPIO"] = pd.to_numeric(df_filtrado_ok["CO_MUNICIPIO"], errors="coerce").astype("Int64")
 
-    # Merge
     df_merge = pd.merge(
         res_ok, df_filtrado_ok,
         left_on="MUNICIPIO_CODIGO", right_on="CO_MUNICIPIO", how="inner"
     )
 
-    # Renomear e selecionar colunas
     resultado = df_merge.rename(
         columns={"Fundamental - Total": "Evasão - Fundamental", "Médio - Total": "Evasão -Médio"}
     ).copy()
     
-    # Coerção robusta para numérico das colunas de métricas
     num_cols = ["Evasão - Fundamental", "Evasão -Médio", "TAXA_APROVACAO_INICIAIS", "TAXA_APROVACAO_FINAIS"]
     num_cols = [c for c in num_cols if c in resultado.columns]
     
     for col in num_cols:
-        resultado[col] = (
-            resultado[col]
-            .astype(str)
-            .str.replace(",", ".", regex=False)
-            .str.replace("%", "", regex=False)
-            .str.replace("\u2212", "-", regex=False)
-        )
-        resultado[col] = pd.to_numeric(resultado[col], errors="coerce")
+        resultado[col] = _to_num(resultado[col]) # Usando _to_num para coerção robusta
 
     # Winsorização (Cap) e Cálculo de Urgência
     winsor_df = resultado.copy()
@@ -371,15 +368,12 @@ def build_evasao(taxas_aprovacao: pd.DataFrame, evasao_path: str) -> pd.DataFram
         winsor_df["Reprovacao_Finais"]
     )
 
-    # Filtrar os 20 municípios mais urgentes
-    urgentes = winsor_df.sort_values("Urgencia", ascending=False).head(20).copy()
-    
-    # Ajuste de colunas e nomes finais
     colunas_essenciais = [
         "MUNICIPIO_CODIGO", "UF_SIGLA", "MUNICIPIO_NOME_ALP", "NO_MUNICIPIO", "NO_LOCALIZACAO", "NO_DEPENDENCIA",
         "Evasão - Fundamental", "Evasão -Médio", "TAXA_APROVACAO_INICIAIS", "TAXA_APROVACAO_FINAIS",
         "Reprovacao_Iniciais", "Reprovacao_Finais", "Urgencia"
     ]
+    urgentes = winsor_df.sort_values("Urgencia", ascending=False).head(20).copy()
     urgentes = urgentes[[c for c in colunas_essenciais if c in urgentes.columns]]
     
     return urgentes
@@ -389,6 +383,17 @@ def build_evasao(taxas_aprovacao: pd.DataFrame, evasao_path: str) -> pd.DataFram
 def build_evolucao_filtrada(df_iniciais: pd.DataFrame, df_finais: pd.DataFrame, df_em: pd.DataFrame, dtb_lookup: pd.DataFrame, urgentes: pd.DataFrame) -> pd.DataFrame:
     """Calcula a evolução histórica das taxas de aprovação (long format) e preenche nulos."""
     if urgentes.empty: return pd.DataFrame()
+
+    # Leitura dos arquivos ODS/XLSX (necessário carregar aqui para evitar conflito de cache)
+    # Assumindo que os nomes são os mesmos definidos no topo do script
+    try:
+        df_iniciais = pd.read_excel(ODS_INICIAIS, header=9)
+        df_finais = pd.read_excel(ODS_FINAIS, header=9)
+        df_em = pd.read_excel(ODS_EM, header=9)
+    except FileNotFoundError:
+        st.error("Arquivos de dados históricos não encontrados (IDEB).")
+        return pd.DataFrame()
+
 
     # 1. Long format para cada etapa
     evo_ini = _long_por_municipio_ano(df_iniciais, "APROVACAO_INICIAIS")
@@ -456,11 +461,18 @@ def build_df_static(evolucao_filtrada: pd.DataFrame, urgentes: pd.DataFrame) -> 
 
     # Prepara evasão
     urg = urgentes.rename(columns={"Evasão - Fundamental": "EVASAO_FUNDAMENTAL"})
-    urg = urg.groupby("NO_MUNICIPIO", as_index=False)["EVASAO_FUNDAMENTAL"].mean(numeric_only=True)
-    urg["MUNICIPIO_NOME"] = urg["NO_MUNICIPIO"].astype(str).str.strip()
+    # Usa NO_MUNICIPIO (nome do município no IBGE) para garantir que o merge funciona
+    nome_col_urg = next((c for c in ["NO_MUNICIPIO", "MUNICIPIO_NOME_ALP"] if c in urg.columns), None)
+    if nome_col_urg:
+        urg["MUNICIPIO_NOME"] = urg[nome_col_urg].astype(str).str.strip()
+        urg = urg.groupby("MUNICIPIO_NOME", as_index=False)["EVASAO_FUNDAMENTAL"].mean(numeric_only=True)
     
     # Merge evasão
     df_static = df_static.merge(urg[["MUNICIPIO_NOME","EVASAO_FUNDAMENTAL"]], on="MUNICIPIO_NOME", how="left")
+
+    # Coerção final -> numérico
+    for c in ["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%","EVASAO_FUNDAMENTAL"]:
+        if c in df_static.columns: df_static[c] = _to_num(df_static[c])
 
     # Métricas derivadas e Score de Risco
     df_static["GAP_APROV_%"] = df_static["APROVACAO_INICIAIS_%"] - df_static["APROVACAO_FINAIS_%"]
@@ -480,7 +492,6 @@ def build_df_static(evolucao_filtrada: pd.DataFrame, urgentes: pd.DataFrame) -> 
 # =========================================================
 
 def graf_tendencia_geral(evo: pd.DataFrame):
-    """Gráfico de linha da Tendência Geral de Aprovação."""
     t = evo.dropna(subset=["ANO","APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"]).copy()
     m = t.groupby("ANO", as_index=False)[["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"]].mean()
     melted = m.melt(id_vars="ANO", var_name="Etapa", value_name="Aprovação (%)")
@@ -490,27 +501,24 @@ def graf_tendencia_geral(evo: pd.DataFrame):
     return fig
 
 def graf_ranking_risco(df_static: pd.DataFrame, top_n=20):
-    """Ranking de risco em gráfico de barras horizontais."""
     t = df_static.dropna(subset=["SCORE_RISCO"]).copy()
     t = t.sort_values("SCORE_RISCO", ascending=False).head(top_n)
     fig = px.bar(
         t, x="SCORE_RISCO", y="MUNICIPIO_NOME", orientation="h",
         hover_data=["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%","EVASAO_FUNDAMENTAL","GAP_APROV_%"],
-        title=f"Top {top_n} — Ranking de Risco (baixa aprov finais + alta evasão + gap)",
+        title=f"Top {top_n} — Ranking de Risco",
         labels={"MUNICIPIO_NOME":"Município","SCORE_RISCO":"Score de Risco (0–1)"}
     )
     fig.update_yaxes(categoryorder="total ascending")
     return fig
 
 def graf_quadrantes_risco(df_static: pd.DataFrame, usar_tamanho_por_risco=True):
-    """Gráfico de Quadrantes: Aprovação Finais vs Evasão Fundamental."""
     t = df_static.dropna(subset=["APROVACAO_FINAIS_%","EVASAO_FUNDAMENTAL"]).copy()
     if t.empty: return None
 
     cut_x = t["APROVACAO_FINAIS_%"].median()
     cut_y = t["EVASAO_FUNDAMENTAL"].median()
 
-    # Rótulo de quadrante
     conds = [
         (t["APROVACAO_FINAIS_%"] < cut_x) & (t["EVASAO_FUNDAMENTAL"] > cut_y),
         (t["APROVACAO_FINAIS_%"] >= cut_x) & (t["EVASAO_FUNDAMENTAL"] > cut_y),
@@ -537,52 +545,78 @@ def graf_quadrantes_risco(df_static: pd.DataFrame, usar_tamanho_por_risco=True):
     fig.update_traces(textposition="top center", marker=dict(opacity=0.8, line=dict(width=1, color="white")))
     return fig
 
-
 # =========================================================
 # 4) Execução Principal (DataFlow)
 # =========================================================
 
-# --- 4.1 Carregamento e Codificação Inicial ---
-with st.spinner("Carregando e codificando bases (DTB/Alpargatas)..."):
-    dtb = carrega_dtb(ARQ_DTB)
-    alpa = carrega_alpargatas(ARQ_ALP)
-    codificados, _ = build_codificados(dtb, alpa)
+# Função auxiliar para garantir a leitura dos arquivos IDEB/INEP no cache
+@st.cache_data
+def _load_inep_data():
+    try:
+        df_iniciais = pd.read_excel(ODS_INICIAIS, header=9)
+        df_finais = pd.read_excel(ODS_FINAIS, header=9)
+        df_em = pd.read_excel(ODS_EM, header=9)
+        return df_iniciais, df_finais, df_em
+    except FileNotFoundError:
+        st.error("Arquivos IDEB/INEP não encontrados.")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-# --- 4.2 Taxas de Aprovação e Fusão ---
-with st.spinner("Calculando taxas de aprovação e fundindo bases..."):
-    taxas_aprovacao = build_taxas_aprovacao(codificados, ODS_INICIAIS, ODS_FINAIS, ODS_EM)
 
-# --- 4.3 Evasão, Urgência e Winsorização ---
-with st.spinner("Calculando evasão e grau de urgência..."):
-    urgentes = build_evasao(taxas_aprovacao, CAMINHO_EVASAO)
+st.info("Script Python iniciou a execução e o carregamento dos dados.")
 
-# --- 4.4 Evolução Histórica (Tabela Longa) ---
-with st.spinner("Preparando a série histórica (evolução)..."):
-    dtb_lookup = dtb[["MUNICIPIO_CODIGO", "UF_SIGLA", "MUNICIPIO_NOME"]].rename(columns={"MUNICIPIO_CODIGO": "CO_MUNICIPIO"}).copy()
-    df_iniciais = pd.read_excel(ODS_INICIAIS, header=9)
-    df_finais = pd.read_excel(ODS_FINAIS, header=9)
-    df_em = pd.read_excel(ODS_EM, header=9)
-    evolucao_filtrada = build_evolucao_filtrada(df_iniciais, df_finais, df_em, dtb_lookup, urgentes)
+try:
+    # --- 4.1 Carregamento e Codificação Inicial ---
+    with st.spinner("Carregando e codificando bases (DTB/Alpargatas)..."):
+        dtb = carrega_dtb(ARQ_DTB)
+        alpa = carrega_alpargatas(ARQ_ALP)
+        codificados, _ = build_codificados(dtb, alpa)
 
-# --- 4.5 Tabela Estática de Risco (Para Gráficos) ---
-with st.spinner("Calculando a tabela estática de risco (df_static)..."):
-    df_static_ready = build_df_static(evolucao_filtrada, urgentes)
+    # --- 4.2 Taxas de Aprovação, Evasão, Urgência e Evolução ---
+    if not codificados.empty:
+        df_iniciais, df_finais, df_em = _load_inep_data()
+        dtb_lookup = dtb[["MUNICIPIO_CODIGO", "UF_SIGLA", "MUNICIPIO_NOME"]].rename(columns={"MUNICIPIO_CODIGO": "CO_MUNICIPIO"}).copy()
+        
+        with st.spinner("Calculando taxas de aprovação..."):
+            taxas_aprovacao = build_taxas_aprovacao(codificados, ODS_INICIAIS, ODS_FINAIS, ODS_EM)
 
+        with st.spinner("Calculando evasão e grau de urgência..."):
+            urgentes = build_evasao(taxas_aprovacao, CAMINHO_EVASAO)
+
+        with st.spinner("Preparando a série histórica (evolução)..."):
+            # build_evolucao_filtrada precisa dos DFs de iniciais/finais/em brutos
+            evolucao_filtrada = build_evolucao_filtrada(df_iniciais, df_finais, df_em, dtb_lookup, urgentes)
+
+        with st.spinner("Calculando a tabela estática de risco (df_static)..."):
+            df_static_ready = build_df_static(evolucao_filtrada, urgentes)
+    else:
+        st.error("Falha ao carregar as bases principais. Verifique os logs.")
+        df_static_ready = pd.DataFrame()
+        evolucao_filtrada = pd.DataFrame()
+        urgentes = pd.DataFrame()
+
+except Exception as e:
+    st.error(f"Ocorreu um erro fatal durante o processamento de dados: {e}")
+    st.warning("Verifique se todos os arquivos estão na pasta 'dados/' e se o arquivo XLSX da DTB e Evasão não está corrompido.")
+    df_static_ready = pd.DataFrame()
+    evolucao_filtrada = pd.DataFrame()
+    urgentes = pd.DataFrame()
+
+
+st.success("Carregamento de dados concluído.")
 # =========================================================
 # 5) Interface do Streamlit
 # =========================================================
 
-if codificados.empty:
-    st.error("⚠️ Ocorreu um erro na leitura dos arquivos ou as bases estão vazias. Verifique os caminhos e o conteúdo dos arquivos.")
+if df_static_ready.empty:
+    st.info("Aguardando o carregamento dos dados para exibir o painel.")
 else:
     # 5.1 KPIs
     df = df_static_ready
     c1, c2, c3, c4 = st.columns(4)
-    if not df.empty:
-        with c1: st.metric("Municípios no recorte", len(df["MUNICIPIO_NOME"].unique()))
-        with c2: st.metric("Aprovação — Finais (média)", f"{df['APROVACAO_FINAIS_%'].mean():.1f}%")
-        with c3: st.metric("Evasão — Fundamental (média)", f"{df['EVASAO_FUNDAMENTAL'].mean():.1f}%")
-        with c4: st.metric("Score de risco (média)", f"{df['SCORE_RISCO'].mean():.2f}")
+    with c1: st.metric("Municípios no recorte", len(df["MUNICIPIO_NOME"].unique()))
+    with c2: st.metric("Aprovação — Finais (média)", f"{df['APROVACAO_FINAIS_%'].mean():.1f}%")
+    with c3: st.metric("Evasão — Fundamental (média)", f"{df['EVASAO_FUNDAMENTAL'].mean():.1f}%")
+    with c4: st.metric("Score de risco (média)", f"{df['SCORE_RISCO'].mean():.2f}")
     st.divider()
 
     # 5.2 Abas
@@ -592,60 +626,47 @@ else:
         st.subheader("Introdução e Metodologia")
         st.markdown("""
         Este painel visa **mapear os municípios com maior urgência educacional** e avaliar os desafios nos locais de atuação.
-        A análise utiliza dados do Instituto Alpargatas (base de municípios alvo) cruzados com bases públicas do **INEP (Censo Escolar)** e **IDEB**,
-        resultando em um **Score de Risco** que prioriza as ações:
-
-        - O Score de Risco combina **baixa taxa de aprovação** (Anos Finais), **alta taxa de evasão** (Fundamental) e o **GAP de aprovação** (Iniciais - Finais).
-        - A métrica **Urgência** (utilizada na tabela *urgentes*) é a soma simples de Evasão (Fund. + Médio) e Reprovação (Iniciais + Finais).
+        O **Score de Risco** combina baixa taxa de aprovação (Anos Finais), alta taxa de evasão (Fundamental) e o GAP de aprovação (Iniciais - Finais).
         """)
 
     with tab_risco:
         st.subheader("Ranking e Quadrantes de Risco")
         
-        if not df_static_ready.empty:
-            st.plotly_chart(graf_quadrantes_risco(df_static_ready), use_container_width=True)
-            st.info("Os pontos são os municípios do recorte. O tamanho do círculo indica o Score de Risco. As linhas tracejadas são as medianas.")
+        st.plotly_chart(graf_quadrantes_risco(df_static_ready), use_container_width=True)
+        st.info("Os pontos são os municípios do recorte. O tamanho do círculo indica o Score de Risco.")
 
-            st.plotly_chart(graf_ranking_risco(df_static_ready), use_container_width=True)
-            
-            # Tabela dos 10 mais urgentes
-            st.markdown("---")
-            st.subheader("Top 10 Municípios por Urgência (Métrica Original)")
-            urg_top10 = urgentes.head(10).reset_index(drop=True)
-            st.dataframe(urg_top10, use_container_width=True)
-            st.caption("Evasão e Reprovação estão em % (0-100). Taxa de Aprovação está em proporção (0-1).")
-        else:
-            st.warning("Não há dados suficientes para calcular o Score de Risco e os Quadrantes.")
+        st.plotly_chart(graf_ranking_risco(df_static_ready), use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("Top 10 Municípios por Urgência (Métrica Original)")
+        urg_top10 = urgentes.head(10).reset_index(drop=True)
+        st.dataframe(urg_top10, use_container_width=True)
 
     with tab_evolucao:
         st.subheader("Análise de Tendência e Evolução")
         
-        if not evolucao_filtrada.empty:
-            st.plotly_chart(graf_tendencia_geral(evolucao_filtrada), use_container_width=True)
+        st.plotly_chart(graf_tendencia_geral(evolucao_filtrada), use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("Evolução Individual por Município")
+        municipio_selecionado = st.selectbox(
+            "Selecione o Município:",
+            options=evolucao_filtrada["MUNICIPIO_NOME"].unique()
+        )
+        
+        if municipio_selecionado:
+            t = evolucao_filtrada[evolucao_filtrada["MUNICIPIO_NOME"] == municipio_selecionado].copy()
+            t = t.dropna(subset=["ANO","APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"])
             
-            st.markdown("---")
-            st.subheader("Evolução Individual por Município")
-            municipio_selecionado = st.selectbox(
-                "Selecione o Município:",
-                options=evolucao_filtrada["MUNICIPIO_NOME"].unique()
-            )
-            
-            # Adaptando graf_tendencia_municipio
-            if municipio_selecionado:
-                t = evolucao_filtrada[evolucao_filtrada["MUNICIPIO_NOME"] == municipio_selecionado].copy()
-                t = t.dropna(subset=["ANO","APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"])
-                
-                if not t.empty:
-                    m = t.groupby("ANO", as_index=False)[["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"]].mean()
-                    melted = m.melt(id_vars="ANO", var_name="Etapa", value_name="Aprovação (%)")
-                    fig = px.line(melted, x="ANO", y="Aprovação (%)", color="Etapa", markers=True,
-                                  title=f"{municipio_selecionado} — Evolução de Aprovação (Iniciais vs Finais)")
-                    fig.update_layout(yaxis_tickformat=".1f", yaxis_range=[60, 100])
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info(f"Dados insuficientes para mostrar a evolução de '{municipio_selecionado}'.")
-        else:
-            st.warning("A série histórica de evolução não pôde ser calculada.")
+            if not t.empty:
+                m = t.groupby("ANO", as_index=False)[["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"]].mean()
+                melted = m.melt(id_vars="ANO", var_name="Etapa", value_name="Aprovação (%)")
+                fig = px.line(melted, x="ANO", y="Aprovação (%)", color="Etapa", markers=True,
+                              title=f"{municipio_selecionado} — Evolução de Aprovação (Iniciais vs Finais)")
+                fig.update_layout(yaxis_tickformat=".1f", yaxis_range=[60, 100])
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info(f"Dados insuficientes para mostrar a evolução de '{municipio_selecionado}'.")
 
     with tab_tables:
         st.subheader("Tabelas de Dados Brutos (Recorte)")
