@@ -7,4 +7,3 @@ scikit-learn
 streamlit
 odfpy         
 openpyxl       
-re
