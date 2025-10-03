@@ -32,7 +32,7 @@ import warnings
 
 # Ignora warnings do Pandas (como SettingWithCopyWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
-warnings.filterwarnings('ignore', category=pd.core.common.SettingWithCopyWarning)
+warnings.filterwarnings('ignore', category=UserWarning)
 
 UF_SIGLAS = {
     "ACRE":"AC","ALAGOAS":"AL","AMAPÁ":"AP","AMAZONAS":"AM","BAHIA":"BA","CEARÁ":"CE",
