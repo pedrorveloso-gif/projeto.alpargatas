@@ -1,6 +1,4 @@
-
-
-    # final_alpa.py
+# final_alpa.py
 import os, re, unicodedata
 import pandas as pd
 import plotly.express as px
@@ -122,6 +120,26 @@ def media_por_municipio(df, rotulo):
              .mean())
     return out, ano
 
+# ---------- NOVO: média histórica (anos ≠ mais recente) ----------
+def media_historica_por_municipio(df, rotulo_hist):
+    """
+    Média por município usando TODOS os anos disponíveis EXCETO o mais recente.
+    Se só houver 1 ano disponível, usa ele mesmo (não quebra).
+    """
+    _, ano_recente, mapping = encontrar_col_indicador_mais_recente(df)
+    cols_hist = [mapping[a] for a in sorted(mapping) if a != ano_recente]
+    if not cols_hist:
+        cols_hist = [mapping[ano_recente]]
+    tmp = df[["CO_MUNICIPIO"] + cols_hist].copy()
+    for c in cols_hist:
+        tmp[c] = to_num(tmp[c])
+    tmp[rotulo_hist] = tmp[cols_hist].mean(axis=1)
+    out = (tmp[["CO_MUNICIPIO", rotulo_hist]]
+             .groupby("CO_MUNICIPIO", as_index=False)[rotulo_hist]
+             .mean())
+    return out
+# ------------------------------------------------------------------
+
 def evolucao_long(df):
     """wide -> long (CO_MUNICIPIO, ANO, VALOR) usando mapeamento robusto."""
     _, _, mapping = encontrar_col_indicador_mais_recente(df)
@@ -167,11 +185,22 @@ def build_data():
     fin, ano_fin = media_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS")
     med, ano_med = media_por_municipio(df_med, "TAXA_APROVACAO_MEDIO")
 
+    # ---------- NOVO: Médias históricas (anos ≠ mais recente)
+    ini_hist = media_historica_por_municipio(df_ini, "TAXA_APROVACAO_INICIAIS_HIST")
+    fin_hist = media_historica_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS_HIST")
+    med_hist = media_historica_por_municipio(df_med, "TAXA_APROVACAO_MEDIO_HIST")
+    # -------------------------------------------------------------
+
     base = (base.merge(ini, on="CO_MUNICIPIO", how="left")
                  .merge(fin, on="CO_MUNICIPIO", how="left")
-                 .merge(med, on="CO_MUNICIPIO", how="left"))
+                 .merge(med, on="CO_MUNICIPIO", how="left")
+                 # ---------- NOVO: merge histórico ----------
+                 .merge(ini_hist, on="CO_MUNICIPIO", how="left")
+                 .merge(fin_hist, on="CO_MUNICIPIO", how="left")
+                 .merge(med_hist, on="CO_MUNICIPIO", how="left"))
 
-    for c in ["TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS","TAXA_APROVACAO_MEDIO"]:
+    for c in ["TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS","TAXA_APROVACAO_MEDIO",
+              "TAXA_APROVACAO_INICIAIS_HIST","TAXA_APROVACAO_FINAIS_HIST","TAXA_APROVACAO_MEDIO_HIST"]:
         if c in base.columns:
             base[c + "_%"] = (base[c]*100).round(2)
 
@@ -207,9 +236,12 @@ with c3: st.metric("Ano (Finais)",   meta["ANO_FIN"])
 with c4: st.metric("Ano (Médio)",    meta["ANO_MED"])
 
 # ---------------- Tabela ----------------
-st.markdown("### 📋 Taxas mais recentes (%)")
+st.markdown("### 📋 Taxas mais recentes e históricas (%)")
 cols_show = ["NO_UF","NO_MUNICIPIO",
-             "TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%"]
+             "TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%",
+             # ---------- NOVO: histórico em % ----------
+             "TAXA_APROVACAO_INICIAIS_HIST_%","TAXA_APROVACAO_FINAIS_HIST_%","TAXA_APROVACAO_MEDIO_HIST_%"]
+cols_show = [c for c in cols_show if c in base.columns]
 st.dataframe(
     base[cols_show].sort_values(["NO_UF","NO_MUNICIPIO"]).reset_index(drop=True),
     use_container_width=True
@@ -248,3 +280,4 @@ with st.expander("🔎 Debug: colunas de indicadores reconhecidas"):
             st.code("\n".join([f"{a}: {c}" for a,c in sorted(mapping.items())]), language="text")
         except Exception as e:
             st.warning(f"{nome}: {e}")
+
