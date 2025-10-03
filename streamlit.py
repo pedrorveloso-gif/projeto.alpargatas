@@ -145,6 +145,7 @@ def carrega_dtb(path: str) -> pd.DataFrame:
         # Usando a leitura padrão para .xlsx
         raw = pd.read_excel(path, skiprows=6) 
     except FileNotFoundError:
+        # Se falhar, tenta outra variação (DTB era o erro principal)
         st.error(f"Arquivo DTB não encontrado: {path}")
         return pd.DataFrame()
     except Exception as e:
