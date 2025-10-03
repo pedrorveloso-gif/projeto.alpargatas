@@ -15,14 +15,11 @@ st.caption("Análise de dados de aprovação, evasão e urgência educacional.")
 # ============================
 # 0) AJUSTE OS CAMINHOS AQUI (TODOS EM .xlsx ou caminho estável)
 # ============================
-ARQ_ALP = "dados/Projetos_de_Atuac807a771o_-_IA_-_2020_a_2025 (1).xlsx"
-# MUDANÇA: ARQUIVO DTB AGORA É XLSX
-ARQ_DTB = "dados/RELATORIO_DTB_BRASIL_2024_MUNICIPIOS.xlsx" 
-ODS_INICIAIS = "dados/divulgacao_anos_iniciais_municipios_2023.xlsx"
-ODS_FINAIS = "dados/divulgacao_anos_finais_municipios_2023.xlsx"
-ODS_EM = "dados/divulgacao_ensino_medio_municipios_2023.xlsx"
-# MUDANÇA: ARQUIVO EVASÃO AGORA É XLSX
-CAMINHO_EVASAO = "dados/TX_TRANSICAO_MUNICIPIOS_2021_2022.xlsx" 
+ARQ_DTB = "dados/dtb_municipios.xlsx" 
+ODS_INICIAIS = "dados/anos_iniciais.xlsx" 
+ODS_FINAIS = "dados/anos_finais.xlsx" 
+ODS_EM = "dados/ensino_medio.xlsx" 
+CAMINHO_EVASAO = "dados/evasao.ods"
 
 # =========================================================
 # 1) Utilitários (Funções auxiliares sem St.cache)
