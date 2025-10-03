@@ -1,6 +1,7 @@
 pandas
 numpy
 matplotlib
+plotly.express
 seaborn
 scikit-learn
 streamlit
