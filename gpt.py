@@ -172,76 +172,42 @@ def acha_header_municipio_uf(df_no_header: pd.DataFrame) -> int | None:
 
 def carrega_alpargatas(path: str) -> pd.DataFrame:
     """
-    Lê abas 2020–2025, detecta (Município + UF/Estado) e mapeia UF para sigla.
+    Lê o arquivo Dados_alpa.xlsx, procurando abas de 2020–2025,
+    e coleta a lista de municípios (sem UF explícito).
+    Assume que todos pertencem ao estado 'PB'.
     """
-    UF_SIGLAS = {
-        "ACRE":"AC","ALAGOAS":"AL","AMAPA":"AP","AMAPÁ":"AP","AMAZONAS":"AM","BAHIA":"BA",
-        "CEARA":"CE","CEARÁ":"CE","DISTRITO FEDERAL":"DF","ESPIRITO SANTO":"ES","ESPÍRITO SANTO":"ES",
-        "GOIAS":"GO","GOIÁS":"GO","MARANHAO":"MA","MARANHÃO":"MA","MATO GROSSO":"MT",
-        "MATO GROSSO DO SUL":"MS","MINAS GERAIS":"MG","PARA":"PA","PARÁ":"PA","PARAIBA":"PB",
-        "PARAÍBA":"PB","PARANA":"PR","PARANÁ":"PR","PERNAMBUCO":"PE","PIAUI":"PI","PIAUÍ":"PI",
-        "RIO DE JANEIRO":"RJ","RIO GRANDE DO NORTE":"RN","RIO GRANDE DO SUL":"RS",
-        "RONDONIA":"RO","RONDÔNIA":"RO","RORAIMA":"RR","SANTA CATARINA":"SC",
-        "SAO PAULO":"SP","SÃO PAULO":"SP","SERGIPE":"SE","TOCANTINS":"TO"
-    }
-
     xls = pd.ExcelFile(path, engine="openpyxl")
+    abas = [a for a in xls.sheet_names if any(str(ano) in a for ano in range(2020, 2026))]
+    if not abas:
+        raise RuntimeError("Nenhuma aba 2020–2025 encontrada no arquivo Alpargatas.")
+    
     frames = []
-
-    for aba in xls.sheet_names:
-        if not any(str(ano) in aba for ano in range(2020, 2026)):
+    for aba in abas:
+        # força header na linha 6 (onde está 'CIDADES')
+        df = pd.read_excel(path, sheet_name=aba, header=5, engine="openpyxl")
+        
+        # checa se a coluna de cidades existe
+        c_cid = next((c for c in df.columns if "CIDADE" in str(c).upper()), None)
+        if not c_cid:
+            st.warning(f"Aba '{aba}': coluna 'CIDADES' não encontrada. Pulando…")
             continue
-        # detectar header
-        try:
-            nohdr = pd.read_excel(path, sheet_name=aba, header=None, nrows=200, engine="openpyxl")
-        except Exception:
-            st.warning(f"Aba '{aba}': não consegui pré-ler. Pulando…")
-            continue
-
-        hdr = acha_header_municipio_uf(nohdr)
-        if hdr is None:
-            st.warning(f"Aba '{aba}': cabeçalho com Município/UF não encontrado. Pulando…")
-            continue
-
-        try:
-            df = pd.read_excel(path, sheet_name=aba, header=hdr, engine="openpyxl")
-        except Exception:
-            st.warning(f"Aba '{aba}': falha ao ler após detectar header. Pulando…")
-            continue
-
-        cmap = {c: _nrm_header(c) for c in df.columns}
-        # município
-        c_mun = next((orig for orig, norm in cmap.items()
-                      if norm in {"CIDADE","CIDADES","MUNICIPIO","MUNICÍPIO","MUNICIPIOS","MUNICÍPIOS"} or
-                         norm.startswith(("CIDA","MUNICIP"))), None)
-        # uf/estado
-        c_uf = next((orig for orig, norm in cmap.items()
-                     if norm in {"UF","SIGLA UF","SIGLA","ESTADO"} or norm.startswith("UF")), None)
-
-        if not c_mun or not c_uf:
-            st.warning(f"Aba '{aba}': não achei colunas Município/UF. Pulando…")
-            continue
-
-        tmp = df[[c_mun, c_uf]].copy()
-        tmp.columns = ["MUNICIPIO_NOME_ALP", "UF_BRUTO"]
+        
+        tmp = df[[c_cid]].copy().rename(columns={c_cid: "MUNICIPIO_NOME_ALP"})
         tmp["MUNICIPIO_NOME_ALP"] = tmp["MUNICIPIO_NOME_ALP"].astype(str).str.upper().str.strip()
-
-        uf_norm = tmp["UF_BRUTO"].astype(str).str.upper().str.strip()
-        tmp["UF_SIGLA"] = np.where(
-            uf_norm.str.fullmatch(r"[A-Z]{2}"), uf_norm, uf_norm.map(UF_SIGLAS)
-        )
-
-        tmp = tmp.dropna(subset=["MUNICIPIO_NOME_ALP","UF_SIGLA"])
+        tmp = tmp.dropna(subset=["MUNICIPIO_NOME_ALP"])
         tmp = tmp[tmp["MUNICIPIO_NOME_ALP"].str.len() > 0]
-
+        
+        # adiciona UF padrão (PB, já que o arquivo não traz)
+        tmp["UF_SIGLA"] = "PB"
+        
         tmp["MUNICIPIO_CHAVE"] = tmp["MUNICIPIO_NOME_ALP"].apply(chave_municipio)
         tmp["FONTE_ABA"] = aba
         frames.append(tmp)
-
+    
     if not frames:
-        raise RuntimeError("Nenhuma aba válida com Município + UF encontrada em Dados_alpa.xlsx")
-
-    return pd.concat(frames, ignore_index=True).drop_duplicates(["MUNICIPIO_CHAVE","UF_SIGLA"])
+        raise RuntimeError("Nenhuma aba válida foi processada no arquivo Alpargatas.")
+    
+    return pd.concat(frames, ignore_index=True).drop_duplicates(["MUNICIPIO_CHAVE", "UF_SIGLA"])
 
 # ============================
 # 3) Acesso aos arquivos de aprovação (auto header)
