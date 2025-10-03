@@ -5,4 +5,5 @@ plotly.express
 seaborn
 scikit-learn
 streamlit
-openpyxl
+openpyxl  
+odfpy
