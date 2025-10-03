@@ -65,48 +65,105 @@ def _nrm_header(s: object) -> str:
 # 2) Leitura de bases
 # ============================
 def carrega_dtb(path: str) -> pd.DataFrame:
-    raw = pd.read_excel(path, engine="odf")
-    norm_map = {_nrm_header(c): c for c in raw.columns}
-    want = {
-        "UF_NOME": ["NOME UF","NOME_UF","UF NOME","UF - NOME","NOME DA UF","UF"],
-        "MUNICIPIO_CODIGO": [
-            "CODIGO MUNICIPIO COMPLETO","CÓDIGO MUNICIPIO COMPLETO",
-            "CODIGO DO MUNICIPIO","CODIGO MUNICIPIO","COD MUNICIPIO"
-        ],
-        "MUNICIPIO_NOME": ["NOME MUNICIPIO","NOME DO MUNICIPIO","NOME_MUNICIPIO","MUNICIPIO","MUNICÍPIO"]
+    """
+    Lê o dtb_municipios.ods detectando automaticamente:
+      • a planilha correta (ignora capas/abas sem dados)
+      • a linha do cabeçalho correta
+    Aceita tanto 'Nome_UF' (nome por extenso) quanto 'UF' (sigla) para a UF.
+    """
+    # 1) varredura de abas e linhas para encontrar um cabeçalho válido
+    xls = pd.ExcelFile(path, engine="odf")
+    header_row = None
+    sheet_ok = None
+
+    # sinônimos aceitos
+    wants_nome_uf = {"NOME UF","NOME_UF","UF NOME","UF - NOME","NOME DA UF"}
+    wants_uf_sigla = {"UF"}
+    wants_cod = {
+        "CODIGO MUNICIPIO COMPLETO","CÓDIGO MUNICIPIO COMPLETO",
+        "CODIGO DO MUNICIPIO","CODIGO MUNICIPIO","COD MUNICIPIO"
     }
-    def _pick(keys):
-        for k in keys:
-            kn = _nrm_header(k)
-            if kn in norm_map: return norm_map[kn]
-            cand = [norm_map[x] for x in norm_map if x.startswith(kn)]
-            if cand: return cand[0]
+    wants_nome_mun = {"NOME MUNICIPIO","NOME DO MUNICIPIO","NOME_MUNICIPIO","MUNICIPIO","MUNICÍPIO"}
+
+    def _has_any(vals:set[str], rowvals:list[str]) -> bool:
+        rowset = set(rowvals)
+        return any(v in rowset for v in vals)
+
+    for sh in xls.sheet_names:
+        # lê as primeiras ~120 linhas sem header para procurar o cabeçalho
+        peek = pd.read_excel(path, engine="odf", sheet_name=sh, header=None, nrows=120)
+        for i, row in peek.iterrows():
+            vals = [_nrm_header(x) for x in row.tolist()]
+            # precisa ter código + nome do município e (Nome_UF OU UF)
+            if _has_any(wants_cod, vals) and _has_any(wants_nome_mun, vals) and (_has_any(wants_nome_uf, vals) or _has_any(wants_uf_sigla, vals)):
+                header_row, sheet_ok = i, sh
+                break
+        if sheet_ok is not None:
+            break
+
+    if sheet_ok is None:
+        raise KeyError(f"DTB: não encontrei um cabeçalho válido em nenhuma aba. Abas: {xls.sheet_names}")
+
+    # 2) lê a planilha com o header detectado
+    raw = pd.read_excel(path, engine="odf", sheet_name=sheet_ok, header=header_row)
+    norm_map = {_nrm_header(c): c for c in raw.columns}
+
+    # 3) localiza colunas reais por nomes normalizados
+    def _pick(candidates:set[str]) -> str | None:
+        for cand in candidates:
+            key = _nrm_header(cand)
+            if key in norm_map:
+                return norm_map[key]
+            # também aceita "começa com"
+            matches = [norm_map[k] for k in norm_map if k.startswith(key)]
+            if matches:
+                return matches[0]
         return None
 
-    c_uf  = _pick(want["UF_NOME"])
-    c_cod = _pick(want["MUNICIPIO_CODIGO"])
-    c_nom = _pick(want["MUNICIPIO_NOME"])
-    missing = [n for n,v in {"UF_NOME":c_uf,"MUNICIPIO_CODIGO":c_cod,"MUNICIPIO_NOME":c_nom}.items() if v is None]
-    if missing:
-        raise KeyError(f"DTB: não encontrei colunas {missing}. Disponíveis: {list(raw.columns)}")
+    c_uf_nome  = _pick(wants_nome_uf)          # pode vir None
+    c_uf_sigla = _pick(wants_uf_sigla)         # pode vir None
+    c_cod_mun  = _pick(wants_cod)
+    c_nome_mun = _pick(wants_nome_mun)
 
-    dtb = raw[[c_uf,c_cod,c_nom]].rename(columns={c_uf:"UF_NOME", c_cod:"MUNICIPIO_CODIGO", c_nom:"MUNICIPIO_NOME"}).dropna()
-    UF_SIGLAS = {
-        "ACRE":"AC","ALAGOAS":"AL","AMAPA":"AP","AMAPÁ":"AP","AMAZONAS":"AM","BAHIA":"BA",
-        "CEARA":"CE","CEARÁ":"CE","DISTRITO FEDERAL":"DF","ESPIRITO SANTO":"ES","ESPÍRITO SANTO":"ES",
-        "GOIAS":"GO","GOIÁS":"GO","MARANHAO":"MA","MARANHÃO":"MA","MATO GROSSO":"MT",
-        "MATO GROSSO DO SUL":"MS","MINAS GERAIS":"MG","PARA":"PA","PARÁ":"PA","PARAIBA":"PB","PARAÍBA":"PB",
-        "PARANA":"PR","PARANÁ":"PR","PERNAMBUCO":"PE","PIAUI":"PI","PIAUÍ":"PI","RIO DE JANEIRO":"RJ",
-        "RIO GRANDE DO NORTE":"RN","RIO GRANDE DO SUL":"RS","RONDONIA":"RO","RONDÔNIA":"RO",
-        "RORAIMA":"RR","SANTA CATARINA":"SC","SAO PAULO":"SP","SÃO PAULO":"SP","SERGIPE":"SE","TOCANTINS":"TO"
-    }
-    dtb["UF_SIGLA"]         = dtb["UF_NOME"].astype(str).str.upper().map(UF_SIGLAS)
+    miss = [n for n,v in {"MUNICIPIO_CODIGO":c_cod_mun, "MUNICIPIO_NOME":c_nome_mun}.items() if v is None]
+    if miss:
+        raise KeyError(f"DTB: não achei colunas essenciais {miss} na aba '{sheet_ok}'. Colunas: {list(raw.columns)}")
+
+    # 4) monta DataFrame padronizado
+    cols = {c_cod_mun:"MUNICIPIO_CODIGO", c_nome_mun:"MUNICIPIO_NOME"}
+    if c_uf_nome:  cols[c_uf_nome]  = "UF_NOME"
+    if c_uf_sigla: cols[c_uf_sigla] = "UF"
+
+    dtb = raw[list(cols.keys())].rename(columns=cols).copy()
+    dtb = dtb.dropna(subset=["MUNICIPIO_CODIGO","MUNICIPIO_NOME"])
+
+    # padronizações
     dtb["MUNICIPIO_CODIGO"] = dtb["MUNICIPIO_CODIGO"].astype(str).str.extract(r"(\d{7})", expand=False).str.zfill(7)
     dtb["MUNICIPIO_NOME"]   = dtb["MUNICIPIO_NOME"].astype(str).str.upper().str.strip()
     dtb["MUNICIPIO_CHAVE"]  = dtb["MUNICIPIO_NOME"].apply(chave_municipio)
+
+    # 5) UF_SIGLA: prioriza Nome_UF → mapa; senão, usa a própria coluna 'UF'
+    UF_SIGLAS = {
+        "ACRE":"AC","ALAGOAS":"AL","AMAPA":"AP","AMAZONAS":"AM","BAHIA":"BA","CEARA":"CE","DISTRITO FEDERAL":"DF",
+        "ESPIRITO SANTO":"ES","GOIAS":"GO","MARANHAO":"MA","MATO GROSSO":"MT","MATO GROSSO DO SUL":"MS","MINAS GERAIS":"MG",
+        "PARA":"PA","PARAIBA":"PB","PARANA":"PR","PERNAMBUCO":"PE","PIAUI":"PI","RIO DE JANEIRO":"RJ",
+        "RIO GRANDE DO NORTE":"RN","RIO GRANDE DO SUL":"RS","RONDONIA":"RO","RORAIMA":"RR","SANTA CATARINA":"SC",
+        "SAO PAULO":"SP","SERGIPE":"SE","TOCANTINS":"TO","AMAPÁ":"AP","CEARÁ":"CE","ESPÍRITO SANTO":"ES","GOIÁS":"GO",
+        "MARANHÃO":"MA","PARÁ":"PA","PARAÍBA":"PB","PARANÁ":"PR"
+    }
+
+    if "UF_NOME" in dtb.columns:
+        dtb["UF_SIGLA"] = dtb["UF_NOME"].astype(str).str.upper().map(UF_SIGLAS)
+    elif "UF" in dtb.columns:
+        dtb["UF_SIGLA"] = dtb["UF"].astype(str).str.upper().str.strip()
+    else:
+        dtb["UF_SIGLA"] = pd.NA
+
     if dtb["UF_SIGLA"].isna().all():
-        raise ValueError("DTB: falha no mapeamento de UF — ver coluna UF_NOME.")
+        raise ValueError(f"DTB: não consegui derivar UF_SIGLA (nem Nome_UF nem UF). Aba '{sheet_ok}'.")
+
     return dtb[["UF_SIGLA","MUNICIPIO_CODIGO","MUNICIPIO_NOME","MUNICIPIO_CHAVE"]]
+
 
 def carrega_alpargatas(path: str) -> pd.DataFrame:
     xls = pd.ExcelFile(path, engine="openpyxl")
