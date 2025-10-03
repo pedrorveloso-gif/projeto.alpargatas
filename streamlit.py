@@ -15,11 +15,13 @@ st.caption("Análise de dados de aprovação, evasão e urgência educacional.")
 # ============================
 # 0) AJUSTE OS CAMINHOS AQUI (TODOS EM .xlsx ou caminho estável)
 # ============================
+# ERRO CORRIGIDO: ARQ_ALP precisa ser definido
+ARQ_ALP = "dados/Dados_alpa.xlsx"
 ARQ_DTB = "dados/dtb_municipios.xlsx" 
 ODS_INICIAIS = "dados/anos_iniciais.xlsx" 
 ODS_FINAIS = "dados/anos_finais.xlsx" 
 ODS_EM = "dados/ensino_medio.xlsx" 
-CAMINHO_EVASAO = "dados/evasao.ods"
+CAMINHO_EVASAO = "dados/evasao.ods" # Se você não converteu para XLSX, manter o .ods
 
 # =========================================================
 # 1) Utilitários (Funções auxiliares sem St.cache)
@@ -140,7 +142,7 @@ def carrega_dtb(path: str) -> pd.DataFrame:
                  "RONDÔNIA":"RO","RORAIMA":"RR","SANTA CATARINA":"SC","SÃO PAULO":"SP",
                  "SERGIPE":"SE","TOCANTINS":"TO"}
     try:
-        # MUDANÇA: engine='odf' removido
+        # Usando a leitura padrão para .xlsx
         raw = pd.read_excel(path, skiprows=6) 
     except FileNotFoundError:
         st.error(f"Arquivo DTB não encontrado: {path}")
@@ -299,11 +301,18 @@ def build_evasao(taxas_aprovacao: pd.DataFrame, evasao_path: str) -> pd.DataFram
     if taxas_aprovacao.empty: return pd.DataFrame()
     
     try:
-        # MUDANÇA: assume .xlsx, removendo dependência de ODS/odfpy
-        df_evasao = pd.read_excel(evasao_path, header = 8) 
+        # Se for ODS, engine deve ser 'odf' (se a lib estiver instalada), caso contrário, o default é 'openpyxl' para XLSX
+        if evasao_path.endswith('.ods'):
+            df_evasao = pd.read_excel(evasao_path, header=8, engine='odf')
+        else:
+            df_evasao = pd.read_excel(evasao_path, header=8) 
     except FileNotFoundError:
-        st.error("Arquivo de Evasão não encontrado. Verifique o caminho.")
+        st.error(f"Arquivo de Evasão não encontrado: {evasao_path}")
         return taxas_aprovacao
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo de Evasão ({evasao_path}). Verifique se é um XLSX válido, ou se o ODS exige a instalação do 'odfpy'. Erro: {e}")
+        return taxas_aprovacao
+
 
     colunas_desejadas = [
         "CO_MUNICIPIO", "NO_MUNICIPIO", "NO_LOCALIZACAO", "NO_DEPENDENCIA",
@@ -382,16 +391,8 @@ def build_evolucao_filtrada(df_iniciais: pd.DataFrame, df_finais: pd.DataFrame, 
     if urgentes.empty: return pd.DataFrame()
 
     # Leitura dos arquivos ODS/XLSX (necessário carregar aqui para evitar conflito de cache)
-    # Assumindo que os nomes são os mesmos definidos no topo do script
-    try:
-        df_iniciais = pd.read_excel(ODS_INICIAIS, header=9)
-        df_finais = pd.read_excel(ODS_FINAIS, header=9)
-        df_em = pd.read_excel(ODS_EM, header=9)
-    except FileNotFoundError:
-        st.error("Arquivos de dados históricos não encontrados (IDEB).")
-        return pd.DataFrame()
-
-
+    # df_iniciais, df_finais, df_em já estão sendo carregados e passados via _load_inep_data
+    
     # 1. Long format para cada etapa
     evo_ini = _long_por_municipio_ano(df_iniciais, "APROVACAO_INICIAIS")
     evo_fin = _long_por_municipio_ano(df_finais, "APROVACAO_FINAIS")
@@ -564,6 +565,7 @@ st.info("Script Python iniciou a execução e o carregamento dos dados.")
 try:
     # --- 4.1 Carregamento e Codificação Inicial ---
     with st.spinner("Carregando e codificando bases (DTB/Alpargatas)..."):
+        # AQUI O ERRO OCORRIA! ARQ_ALP agora está definido no topo
         dtb = carrega_dtb(ARQ_DTB)
         alpa = carrega_alpargatas(ARQ_ALP)
         codificados, _ = build_codificados(dtb, alpa)
@@ -580,7 +582,6 @@ try:
             urgentes = build_evasao(taxas_aprovacao, CAMINHO_EVASAO)
 
         with st.spinner("Preparando a série histórica (evolução)..."):
-            # build_evolucao_filtrada precisa dos DFs de iniciais/finais/em brutos
             evolucao_filtrada = build_evolucao_filtrada(df_iniciais, df_finais, df_em, dtb_lookup, urgentes)
 
         with st.spinner("Calculando a tabela estática de risco (df_static)..."):
