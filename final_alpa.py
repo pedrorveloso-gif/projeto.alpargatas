@@ -130,13 +130,11 @@ def carrega_alpargatas(path: str) -> pd.DataFrame:
 # =========================================================
 # 4) Cruzamento e saída
 # =========================================================
-def cruzar_e_salvar(dtb: pd.DataFrame, alpa: pd.DataFrame, saida_dir: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def cruzar_e_salvar(dtb: pd.DataFrame, alpa: pd.DataFrame, saida_dir: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Casa Alpargatas × IBGE usando (MUNICIPIO_CHAVE, UF_SIGLA).
-    Salva:
-      - municipios_alpargatas_codificados.csv
-      - municipios_nao_encontrados_para_tratar.csv
-    Retorna (codificados, nao_encontrados)
+    Se 'saida_dir' for informado, salva CSVs.
+    Retorna (codificados, nao_encontrados).
     """
     codificados = alpa.merge(
         dtb, on=["MUNICIPIO_CHAVE","UF_SIGLA"], how="left", suffixes=("_ALP","_IBGE")
@@ -146,20 +144,17 @@ def cruzar_e_salvar(dtb: pd.DataFrame, alpa: pd.DataFrame, saida_dir: str) -> tu
                        .drop_duplicates(subset=["MUNICIPIO_NOME_ALP","UF_SIGLA"])
                        .sort_values(["UF_SIGLA","MUNICIPIO_NOME_ALP"]))
 
-    Path(saida_dir).mkdir(parents=True, exist_ok=True)
-    codificados.to_csv(Path(saida_dir, "municipios_alpargatas_codificados.csv"), index=False, encoding="utf-8")
-    nao_encontrados.to_csv(Path(saida_dir, "municipios_nao_encontrados_para_tratar.csv"), index=False, encoding="utf-8")
-
-    print(f"\nConcluído:")
-    print(f" - Codificados: {len(codificados):>6} (arquivo salvo)")
-    print(f" - Para revisar: {len(nao_encontrados):>6} (arquivo salvo)")
+    if saida_dir:
+        Path(saida_dir).mkdir(parents=True, exist_ok=True)
+        codificados.to_csv(Path(saida_dir, "municipios_alpargatas_codificados.csv"), index=False, encoding="utf-8")
+        nao_encontrados.to_csv(Path(saida_dir, "municipios_nao_encontrados_para_tratar.csv"), index=False, encoding="utf-8")
 
     return codificados, nao_encontrados
+
 
 # =========================================================
 # 5) Execução
 # =========================================================
-
 if __name__ == "__main__":
     print("Lendo DTB/IBGE…")
     dtb  = carrega_dtb(ARQ_DTB)
@@ -167,10 +162,13 @@ if __name__ == "__main__":
     print("Lendo abas do arquivo Alpargatas…")
     alpa = carrega_alpargatas(ARQ_ALP)
 
-# Adicionar manualmente o código de CAMPINA GRANDE (PB) se estiver NaN
-mask = (codificados["MUNICIPIO_NOME_ALP"].str.contains("CAMPINA GRANDE", case=False, na=False)) & \
-       (codificados["UF_SIGLA"] == "PB") & \
-       (codificados["MUNICIPIO_CODIGO"].isna())
+    # >>> ajuste CAMPINA GRANDE aqui
+    mask = (codificados["MUNICIPIO_NOME_ALP"].str.contains("CAMPINA GRANDE", case=False, na=False)) & \
+           (codificados["UF_SIGLA"] == "PB") & \
+           (codificados["MUNICIPIO_CODIGO"].isna())
+    codificados.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
+    codificados = codificados.drop(columns=["MUNICIPIO_NOME_IBGE"], errors="ignore")
+
 
 codificados.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
 remover = ["MUNICIPIO_NOME_IBGE"]
@@ -1322,6 +1320,7 @@ with tab_diag:
     _diag(df_static_ready, "df_static_ready")
     _diag(evo_safe, "evolucao_filtrada")
     _diag(urg_safe, "urgentes")
+
 
 
 
