@@ -13,15 +13,17 @@ st.title("📊 Instituto Alpargatas — Painel")
 st.caption("Análise de dados de aprovação, evasão e urgência educacional.")
 
 # ============================
-# 0) AJUSTE OS CAMINHOS AQUI (TODOS EM .xlsx ou caminho estável)
+# 0) AJUSTE OS CAMINHOS AQUI
 # ============================
-# ERRO CORRIGIDO: ARQ_ALP precisa ser definido
+# ARQUIVOS XLSX:
 ARQ_ALP = "dados/Dados_alpa.xlsx"
-ARQ_DTB = "dados/dtb_municipios.ods" 
 ODS_INICIAIS = "dados/anos_iniciais.xlsx" 
 ODS_FINAIS = "dados/anos_finais.xlsx" 
 ODS_EM = "dados/ensino_medio.xlsx" 
-CAMINHO_EVASAO = "dados/evasao.ods" # Se você não converteu para XLSX, manter o .ods
+
+# ARQUIVOS ODS (Requer 'odfpy' no requirements.txt):
+ARQ_DTB = "dados/dtb_municipios.ods" 
+CAMINHO_EVASAO = "dados/evasao.ods" 
 
 # =========================================================
 # 1) Utilitários (Funções auxiliares sem St.cache)
@@ -141,17 +143,31 @@ def carrega_dtb(path: str) -> pd.DataFrame:
                  "RIO DE JANEIRO":"RJ","RIO GRANDE DO NORTE":"RN","RIO GRANDE DO SUL":"RS",
                  "RONDÔNIA":"RO","RORAIMA":"RR","SANTA CATARINA":"SC","SÃO PAULO":"SP",
                  "SERGIPE":"SE","TOCANTINS":"TO"}
+    
+    is_ods = path.endswith('.ods')
+    
     try:
-        # Usando a leitura padrão para .xlsx
-        raw = pd.read_excel(path, skiprows=6) 
+        if is_ods:
+             # MUDANÇA: engine='odf' adicionado explicitamente para ODS
+            raw = pd.read_excel(path, skiprows=6, engine='odf')
+        else:
+            raw = pd.read_excel(path, skiprows=6) 
+        
+        return _processa_dtb(raw, UF_SIGLAS)
+    
     except FileNotFoundError:
-        # Se falhar, tenta outra variação (DTB era o erro principal)
         st.error(f"Arquivo DTB não encontrado: {path}")
         return pd.DataFrame()
     except Exception as e:
-        st.error(f"Erro ao ler DTB. Tente garantir que o arquivo é um XLSX válido: {e}")
+        # Tenta fallback se o erro for de ODS/XLSX
+        if is_ods:
+            st.error(f"Erro ao ler DTB ODS. Verifique se 'odfpy' está no requirements.txt. Erro: {e}")
+        else:
+            st.error(f"Erro ao ler DTB XLSX. Verifique se 'openpyxl' está no requirements.txt. Erro: {e}")
         return pd.DataFrame()
 
+def _processa_dtb(raw: pd.DataFrame, UF_SIGLAS: dict) -> pd.DataFrame:
+    # Lógica de processamento da DTB movida para uma função auxiliar
     dtb = (raw.rename(columns={
                 "UF": "UF_COD_NUM", "Nome_UF": "UF_NOME",
                 "Código Município Completo": "MUNICIPIO_CODIGO",
@@ -163,7 +179,6 @@ def carrega_dtb(path: str) -> pd.DataFrame:
     dtb["MUNICIPIO_CODIGO"] = dtb["MUNICIPIO_CODIGO"].astype(str).str.zfill(7)
     dtb["MUNICIPIO_NOME"] = dtb["MUNICIPIO_NOME"].astype(str).str.upper().str.strip()
     dtb["MUNICIPIO_CHAVE"] = dtb["MUNICIPIO_NOME"].apply(chave_municipio)
-
     return dtb[["UF_SIGLA","MUNICIPIO_CODIGO","MUNICIPIO_NOME","MUNICIPIO_CHAVE"]]
 
 # --- Leitura do arquivo Alpargatas ---
@@ -301,17 +316,22 @@ def build_evasao(taxas_aprovacao: pd.DataFrame, evasao_path: str) -> pd.DataFram
     """Lê dados de evasão, cruza com as taxas de aprovação, aplica Winsorização e calcula Urgência."""
     if taxas_aprovacao.empty: return pd.DataFrame()
     
+    is_ods = evasao_path.endswith('.ods')
     try:
-        # Se for ODS, engine deve ser 'odf' (se a lib estiver instalada), caso contrário, o default é 'openpyxl' para XLSX
-        if evasao_path.endswith('.ods'):
+        if is_ods:
+            # Lendo ODS
             df_evasao = pd.read_excel(evasao_path, header=8, engine='odf')
         else:
+            # Lendo XLSX
             df_evasao = pd.read_excel(evasao_path, header=8) 
     except FileNotFoundError:
         st.error(f"Arquivo de Evasão não encontrado: {evasao_path}")
         return taxas_aprovacao
     except Exception as e:
-        st.error(f"Erro ao ler arquivo de Evasão ({evasao_path}). Verifique se é um XLSX válido, ou se o ODS exige a instalação do 'odfpy'. Erro: {e}")
+        if is_ods:
+            st.error(f"Erro ao ler arquivo de Evasão ODS. Verifique se 'odfpy' está no requirements.txt. Erro: {e}")
+        else:
+            st.error(f"Erro ao ler arquivo de Evasão XLSX. Erro: {e}")
         return taxas_aprovacao
 
 
@@ -331,7 +351,8 @@ def build_evasao(taxas_aprovacao: pd.DataFrame, evasao_path: str) -> pd.DataFram
             )
 
     res_ok = taxas_aprovacao.copy().dropna(subset=["MUNICIPIO_CODIGO"])
-    df_filtrado_ok = df_filtrado.dropna(subset=["CO_MUNICIPIO"])
+    df_filtrado_ok = df_evasao.dropna(subset=["CO_MUNICIPIO"])
+    # NOTA: df_evasao aqui está correto, pois CO_MUNICIPIO é lido diretamente do arquivo de evasão
 
     res_ok["MUNICIPIO_CODIGO"] = pd.to_numeric(res_ok["MUNICIPIO_CODIGO"], errors="coerce").astype("Int64")
     df_filtrado_ok["CO_MUNICIPIO"] = pd.to_numeric(df_filtrado_ok["CO_MUNICIPIO"], errors="coerce").astype("Int64")
@@ -566,7 +587,6 @@ st.info("Script Python iniciou a execução e o carregamento dos dados.")
 try:
     # --- 4.1 Carregamento e Codificação Inicial ---
     with st.spinner("Carregando e codificando bases (DTB/Alpargatas)..."):
-        # AQUI O ERRO OCORRIA! ARQ_ALP agora está definido no topo
         dtb = carrega_dtb(ARQ_DTB)
         alpa = carrega_alpargatas(ARQ_ALP)
         codificados, _ = build_codificados(dtb, alpa)
