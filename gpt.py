@@ -6,6 +6,8 @@ import numpy as np
 import unicodedata, re
 import plotly.express as px
 import streamlit as st
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl.worksheet._reader")
 
 # ============================
 # 0) CAMINHOS (relativos ao repo)
