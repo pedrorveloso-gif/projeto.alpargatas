@@ -8,10 +8,8 @@ import matplotlib.pyplot as plt
 # ============================
 # 0) AJUSTE OS CAMINHOS AQUI
 # ============================
-ARQ_ALP = r"C:\Users\pedro\OneDrive\Documentos\Análise dados\alpargatas\Projetos_de_Atuac807a771o_-_IA_-_2020_a_2025 (1).xlsx"
-ARQ_DTB = r"C:\Users\pedro\OneDrive\Documentos\Análise dados\alpargatas\RELATORIO_DTB_BRASIL_2024_MUNICIPIOS.ods"
-SAIDA_DIR = r"C:\Users\pedro\OneDrive\Documentos\Análise dados\alpargatas"  # pasta onde quer salvar os CSVs
-
+ARQ_ALP = "dados/Projetos_de_Atuac807a771o_-_IA_-_2020_a_2025 (1).xlsx"
+ARQ_DTB = "dados/RELATORIO_DTB_BRASIL_2024_MUNICIPIOS.ods"
 
 # =========================================================
 # 1) Utilitários curtos
@@ -184,9 +182,9 @@ codificados.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
 remover = ["MUNICIPIO_NOME_IBGE"]
 codificados = codificados.drop(columns=remover, errors="ignore")
 
-ods_iniciais = r"C:\Users\pedro\OneDrive\Documentos\Análise dados\alpargatas\divulgacao_anos_iniciais_municipios_2023.xlsx"
-ods_finais = r"C:\Users\pedro\OneDrive\Documentos\Análise dados\alpargatas\divulgacao_anos_finais_municipios_2023.xlsx"
-ods_em = r"C:\Users\pedro\OneDrive\Documentos\Análise dados\alpargatas\divulgacao_ensino_medio_municipios_2023.xlsx"
+ods_iniciais = "dados/divulgacao_anos_iniciais_municipios_2023.xlsx
+ods_finais = "dados/divulgacao_anos_finais_municipios_2023.xlsx"
+ods_em = "dados/divulgacao_ensino_medio_municipios_2023.xlsx"
 
 df_iniciais = pd.read_excel(ods_iniciais, header= 9)
 df_finais = pd.read_excel(ods_finais, header = 9)
@@ -324,7 +322,7 @@ tabela_uf = (
     .sort_values("TAXA_APROVACAO_INICIAIS_%", ascending=False)
 )
 
-caminho_evasao = r"C:\Users\pedro\OneDrive\Documentos\Análise dados\alpargatas\TX_TRANSICAO_MUNICIPIOS_2021_2022.ods"
+caminho_evasao = "dados/TX_TRANSICAO_MUNICIPIOS_2021_2022.ods"
 df_evasao = pd.read_excel(caminho_evasao, header = 8)
 
 # selecionar apenas as colunas que você quer
@@ -1330,3 +1328,4 @@ with tab_diag:
     _diag(df_static_ready, "df_static_ready")
     _diag(evo_safe, "evolucao_filtrada")
     _diag(urg_safe, "urgentes")
+
