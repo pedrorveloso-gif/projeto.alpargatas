@@ -13,7 +13,7 @@ ARQ_ALP = "dados/Dados_alpa.xlsx"
 ARQ_INICIAIS = "dados/anos_iniciais.xlsx"
 ARQ_FINAIS = "dados/anos_finais.xlsx"
 ARQ_EM = "dados/ensino_medio.xlsx"
-ARQ_EVASAO = "dados/evasao.
+ARQ_EVASAO = "dados/evasao.ods"
        
 
 # ======================================================================================
