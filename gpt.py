@@ -1,12 +1,21 @@
+# streamlit_app.py
+# App único (sem SAIDA_DIR). Requer: pandas, numpy, plotly, streamlit, odfpy, openpyxl
+
 import pandas as pd
-import unicodedata
-from pathlib import Path
+import numpy as np
+import unicodedata, re
+import plotly.express as px
+import streamlit as st
 
 # ============================
-# 0) CAMINHOS (use os seus)
+# 0) CAMINHOS (relativos ao repo)
 # ============================
 ARQ_ALP = "dados/Dados_alpa.xlsx"
 ARQ_DTB = "dados/dtb_municipios.ods"
+ARQ_INICIAIS = "dados/anos_iniciais.xlsx"
+ARQ_FINAIS   = "dados/anos_finais.xlsx"
+ARQ_EM       = "dados/ensino_medio.xlsx"
+ARQ_EVASAO   = "dados/evasao.ods"
 
 # =========================================================
 # 1) Utilitários curtos
@@ -31,8 +40,21 @@ def acha_linha_header_cidades_uf(df_no_header: pd.DataFrame) -> int | None:
             return i
     return None
 
+def to7(s: pd.Series) -> pd.Series:
+    return s.astype(str).str.extract(r"(\d{7})", expand=False).str.zfill(7)
+
+def _num(s: pd.Series) -> pd.Series:  # trata %, vírgula, etc.
+    return pd.to_numeric(
+        s.astype(str).str.replace("%","",regex=False).str.replace(",",".",regex=False),
+        errors="coerce"
+    )
+
+def _minmax(s: pd.Series) -> pd.Series:
+    s = pd.to_numeric(s, errors="coerce")
+    return (s - s.min())/(s.max()-s.min()) if s.max()!=s.min() else pd.Series(0.5, index=s.index)
+
 # =========================================================
-# 2) Ler & limpar DTB/IBGE
+# 2) Leitura de bases
 # =========================================================
 def carrega_dtb(path: str) -> pd.DataFrame:
     UF_SIGLAS = {
@@ -56,9 +78,6 @@ def carrega_dtb(path: str) -> pd.DataFrame:
     dtb["MUNICIPIO_CHAVE"]  = dtb["MUNICIPIO_NOME"].apply(chave_municipio)
     return dtb[["UF_SIGLA","MUNICIPIO_CODIGO","MUNICIPIO_NOME","MUNICIPIO_CHAVE"]]
 
-# =========================================================
-# 3) Ler abas do arquivo Alpargatas (2020–2025)
-# =========================================================
 def carrega_alpargatas(path: str) -> pd.DataFrame:
     xls = pd.ExcelFile(path)
     abas = [a for a in xls.sheet_names if any(str(ano) in a for ano in range(2020, 2026))]
@@ -69,14 +88,14 @@ def carrega_alpargatas(path: str) -> pd.DataFrame:
         nohdr = pd.read_excel(path, sheet_name=aba, header=None, nrows=400)
         hdr = acha_linha_header_cidades_uf(nohdr)
         if hdr is None:
-            print(f"[AVISO] Header CIDADES/UF não encontrado na aba '{aba}'. Pulando…")
+            st.warning(f"Header CIDADES/UF não encontrado na aba '{aba}'. Pulando…")
             continue
         df = pd.read_excel(path, sheet_name=aba, header=hdr)
         cmap = {c: nrm(c) for c in df.columns}
         c_cid = next((orig for orig, norm in cmap.items() if norm=="CIDADES"), None)
         c_uf  = next((orig for orig, norm in cmap.items() if norm=="UF"), None)
         if not c_cid or not c_uf:
-            print(f"[AVISO] Colunas 'CIDADES'/'UF' ausentes na aba '{aba}'. Pulando…")
+            st.warning(f"Colunas 'CIDADES'/'UF' ausentes na aba '{aba}'. Pulando…")
             continue
         tmp = (df[[c_cid,c_uf]].copy()
                  .rename(columns={c_cid:"MUNICIPIO_NOME_ALP", c_uf:"UF_SIGLA"}))
@@ -91,9 +110,6 @@ def carrega_alpargatas(path: str) -> pd.DataFrame:
         raise RuntimeError("Nenhuma aba válida foi processada (CIDADES/UF não encontrado).")
     return pd.concat(frames, ignore_index=True).drop_duplicates(["MUNICIPIO_CHAVE","UF_SIGLA"])
 
-# =========================================================
-# 4) Cruzamento (sem salvar arquivos)
-# =========================================================
 def cruzar(dtb: pd.DataFrame, alpa: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     codificados = alpa.merge(
         dtb, on=["MUNICIPIO_CHAVE","UF_SIGLA"], how="left", suffixes=("_ALP","_IBGE")
@@ -101,55 +117,11 @@ def cruzar(dtb: pd.DataFrame, alpa: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
     nao_encontrados = (codificados[codificados["MUNICIPIO_CODIGO"].isna()]
                        .drop_duplicates(subset=["MUNICIPIO_NOME_ALP","UF_SIGLA"])
                        .sort_values(["UF_SIGLA","MUNICIPIO_NOME_ALP"]))
-    print("\nConcluído:")
-    print(f" - Codificados:   {len(codificados):>6}")
-    print(f" - Para revisar:  {len(nao_encontrados):>6}")
     return codificados, nao_encontrados
 
 # =========================================================
-# 5) Execução
+# 3) Funções para evolução/indicadores
 # =========================================================
-if __name__ == "__main__":
-    print("Lendo DTB/IBGE…")
-    dtb  = carrega_dtb(ARQ_DTB)
-
-    print("Lendo abas do arquivo Alpargatas…")
-    alpa = carrega_alpargatas(ARQ_ALP)
-
-    print("Cruzando…")
-    codificados, nao_encontrados = cruzar(dtb, alpa)
-
-    print("\nAmostra codificados:")
-    print(codificados.head(10).to_string(index=False))
-
-# streamlit_app.py
-# Requer: pandas, numpy, plotly, streamlit, odfpy (para .ods)
-import pandas as pd
-import numpy as np
-import unicodedata, re
-import plotly.express as px
-import streamlit as st
-
-# ===== IMPORTANTE =====
-# Cole acima deste bloco as funções que já te enviei:
-# - nrm, chave_municipio, acha_linha_header_cidades_uf
-# - carrega_dtb, carrega_alpargatas, cruzar
-# - e os ARQ_ALP / ARQ_DTB (sem SAIDA_DIR)
-
-# ============================
-# 0) CAMINHOS extras (use os seus)
-# ============================
-ARQ_INICIAS = "dados/anos_iniciais.xlsx"
-ARQ_FINAIS = "dados/anos_finais.xlsx"
-ARQ_EM = "dados/ensino_medio.xlsx"
-ARQ_EVASAO   = "dados/evasao.ods"
-
-# ============================
-# 1) Funções utilitárias
-# ============================
-def to7(s: pd.Series) -> pd.Series:
-    return s.astype(str).str.extract(r"(\d{7})", expand=False).str.zfill(7)
-
 def media_por_municipio(df: pd.DataFrame, rotulo: str) -> pd.DataFrame:
     out = pd.DataFrame({
         "CO_MUNICIPIO": to7(df["CO_MUNICIPIO"]),
@@ -183,32 +155,22 @@ def _long_por_municipio_ano(df: pd.DataFrame, rotulo: str) -> pd.DataFrame:
     long_.drop(columns="variable", inplace=True)
     return long_.groupby(["CO_MUNICIPIO","ANO"], as_index=False)[rotulo].mean()
 
-def _num(s):  # % e vírgulas
-    return pd.to_numeric(
-        s.astype(str).str.replace("%","",regex=False).str.replace(",","." ,regex=False),
-        errors="coerce"
-    )
-
-def _minmax(s: pd.Series) -> pd.Series:
-    s = pd.to_numeric(s, errors="coerce")
-    return (s - s.min())/(s.max()-s.min()) if s.max()!=s.min() else pd.Series(0.5, index=s.index)
-
-# ============================
-# 2) Pipeline de dados
-# ============================
-@st.cache_data(show_spinner=False)
+# =========================================================
+# 4) Pipeline cacheado
+# =========================================================
+@st.cache_data(show_spinner=True)
 def build_data():
-    # DTB + Alpargatas (match)
+    # DTB + Alpargatas
     dtb = carrega_dtb(ARQ_DTB)
     alpa = carrega_alpargatas(ARQ_ALP)
     codificados, _nao = cruzar(dtb, alpa)
 
-    # Ajuste Campina Grande (se faltar)
+    # hotfix Campina Grande
     mask = (codificados["MUNICIPIO_NOME_ALP"].str.contains("CAMPINA GRANDE", case=False, na=False)) & \
            (codificados["UF_SIGLA"]=="PB") & (codificados["MUNICIPIO_CODIGO"].isna())
     codificados.loc[mask, "MUNICIPIO_CODIGO"] = "2504009"
 
-    # Planilhas aprovação
+    # Aprovação (INEP)
     df_ini = pd.read_excel(ARQ_INICIAIS, header=9)
     df_fin = pd.read_excel(ARQ_FINAIS,   header=9)
     df_med = pd.read_excel(ARQ_EM,       header=9)
@@ -219,15 +181,14 @@ def build_data():
 
     res = codificados.copy()
     res["MUNICIPIO_CODIGO"] = to7(res["MUNICIPIO_CODIGO"])
-    res = (res
-           .merge(ini, left_on="MUNICIPIO_CODIGO", right_on="CO_MUNICIPIO", how="left")
-           .merge(fin, left_on="MUNICIPIO_CODIGO", right_on="CO_MUNICIPIO", how="left", suffixes=("","_fin"))
-           .merge(med, left_on="MUNICIPIO_CODIGO", right_on="CO_MUNICIPIO", how="left", suffixes=("","_med")))
+    res = (res.merge(ini, left_on="MUNICIPIO_CODIGO", right_on="CO_MUNICIPIO", how="left")
+             .merge(fin, left_on="MUNICIPIO_CODIGO", right_on="CO_MUNICIPIO", how="left", suffixes=("","_fin"))
+             .merge(med, left_on="MUNICIPIO_CODIGO", right_on="CO_MUNICIPIO", how="left", suffixes=("","_med")))
     for c in ["CO_MUNICIPIO","CO_MUNICIPIO_fin","CO_MUNICIPIO_med"]:
         if c in res.columns: res.drop(columns=c, inplace=True)
 
     # Evasão
-    if ARQ_EVASAO.lower().endswith(".ods"):
+    if str(ARQ_EVASAO).lower().endswith(".ods"):
         df_eva = pd.read_excel(ARQ_EVASAO, header=8, engine="odf")
     else:
         df_eva = pd.read_excel(ARQ_EVASAO, header=8)
@@ -243,36 +204,32 @@ def build_data():
     for c in ["EVASAO_FUNDAMENTAL","EVASAO_MEDIO"]:
         if c in eva.columns: eva[c] = _num(eva[c])
 
-    # Merge res × evasão
+    # Merge + urgência
     res2 = res.merge(eva, left_on="MUNICIPIO_CODIGO", right_on="CO_MUNICIPIO", how="left")
-
-    # Urgência simples
     res2["Reprovacao_Iniciais"] = (1 - pd.to_numeric(res2["TAXA_APROVACAO_INICIAIS"], errors="coerce")) * 100
     res2["Reprovacao_Finais"]   = (1 - pd.to_numeric(res2["TAXA_APROVACAO_FINAIS"],  errors="coerce")) * 100
     for c in ["EVASAO_FUNDAMENTAL","EVASAO_MEDIO","Reprovacao_Iniciais","Reprovacao_Finais"]:
         res2[c] = _num(res2[c])
     res2["Urgencia"] = res2[["EVASAO_FUNDAMENTAL","EVASAO_MEDIO","Reprovacao_Iniciais","Reprovacao_Finais"]].sum(axis=1, skipna=True)
 
-    # Tabela de urgentes (top 20)
-    urgentes = (res2.copy()
-                .sort_values("Urgencia", ascending=False)
-                .head(20))
+    urgentes = res2.sort_values("Urgencia", ascending=False).head(20)
 
-    # Evolução histórica (2005–2023)
+    # Evolução 2005–2023
     evo_ini = _long_por_municipio_ano(df_ini, "APROVACAO_INICIAIS")
     evo_fin = _long_por_municipio_ano(df_fin, "APROVACAO_FINAIS")
     evo_med = _long_por_municipio_ano(df_med, "APROVACAO_MEDIO")
     evolucao = (evo_ini.merge(evo_fin, on=["CO_MUNICIPIO","ANO"], how="outer")
                        .merge(evo_med, on=["CO_MUNICIPIO","ANO"], how="outer"))
-    evolucao["APROVACAO_MEDIA_GERAL"] = evolucao[["APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO"]].mean(axis=1, skipna=True)
+    evolucao["APROVACAO_MEDIA_GERAL"] = evolucao[
+        ["APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO"]
+    ].mean(axis=1, skipna=True)
 
-    # Anexar UF + nome
+    # Anexar UF + nome e filtrar pelos urgentes
     dtb_lookup = dtb[["MUNICIPIO_CODIGO","UF_SIGLA","MUNICIPIO_NOME"]].rename(columns={"MUNICIPIO_CODIGO":"CO_MUNICIPIO"})
     dtb_lookup["CO_MUNICIPIO"] = to7(dtb_lookup["CO_MUNICIPIO"])
     evolucao = evolucao.merge(dtb_lookup, on="CO_MUNICIPIO", how="left")
     evolucao["MUNICIPIO_CHAVE"] = evolucao["MUNICIPIO_NOME"].apply(chave_municipio)
 
-    # Filtrar só municípios presentes em urgentes
     urg_ck = ensure_key_urgentes(urgentes)
     evolucao_filtrada = evolucao.merge(
         urg_ck[["UF_SIGLA","MUNICIPIO_CHAVE"]].drop_duplicates(),
@@ -281,16 +238,15 @@ def build_data():
 
     return res2, urgentes, evolucao_filtrada
 
-# ============================
-# 3) Painel Streamlit
-# ============================
+# =========================================================
+# 5) UI
+# =========================================================
 st.set_page_config(page_title="IA • Aprovação/Evasão", page_icon="📊", layout="wide")
 st.title("📊 Instituto Alpargatas — Painel (sem SAIDA_DIR)")
 
 with st.spinner("Processando dados…"):
     base, urgentes, evolucao_filtrada = build_data()
 
-# KPIs
 c1,c2,c3,c4 = st.columns(4)
 with c1: st.metric("Municípios (base)", f"{base['MUNICIPIO_CODIGO'].nunique()}")
 with c2: st.metric("Aprovação — Finais (média)", f"{(pd.to_numeric(base['TAXA_APROVACAO_FINAIS'], errors='coerce').mean()*100):.1f}%")
@@ -307,7 +263,8 @@ with tab1:
     ]], use_container_width=True)
 
     st.subheader("Evolução (recorte dos urgentes)")
-    show_cols = ["UF_SIGLA","MUNICIPIO_NOME","ANO","APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO","APROVACAO_MEDIA_GERAL"]
+    show_cols = ["UF_SIGLA","MUNICIPIO_NOME","ANO",
+                 "APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO","APROVACAO_MEDIA_GERAL"]
     st.dataframe(evolucao_filtrada[show_cols], use_container_width=True)
 
 with tab2:
@@ -332,5 +289,3 @@ with tab3:
     st.write("base:", base.shape, "| urgentes:", urgentes.shape, "| evolucao_filtrada:", evolucao_filtrada.shape)
     st.write("Tipos (base):")
     st.code(str(base.dtypes))
-
-
