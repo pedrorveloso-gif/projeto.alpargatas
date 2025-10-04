@@ -188,9 +188,9 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
     return u
 
 # ---------------- App ----------------
-st.set_page_config(page_title="Instituto Alpargatas — Painel (hotfix)", layout="wide")
+st.set_page_config(page_title="Instituto Alpargatas — Painel", layout="wide")
 
-st.title("📊 Instituto Alpargatas — Painel Municípios (sem Dados_alpa)")
+st.title("📊 Instituto Alpargatas — Mapeamento de urgência")
 with st.expander("📁 Arquivos esperados em `dados/`", expanded=False):
     for p in [ARQ_INICIAIS, ARQ_FINAIS, ARQ_MEDIO, ARQ_URGENTES]:
         st.write(("✅" if os.path.exists(p) else "❌"), p)
@@ -362,4 +362,5 @@ with tab_diag:
             st.code("\n".join([f"{a}: {c}" for a,c in sorted(mapping.items())]), language="text")
         except Exception as e:
             st.warning(f"{nome}: {e}")
+
 
