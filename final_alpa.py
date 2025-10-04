@@ -274,12 +274,12 @@ with tab_intro:
         """Este site apresenta os resultados da análise de dados cujo objetivo foi **mapear os municípios com maior urgência educacional**
         e avaliar como os projetos do **Instituto Alpargatas (2020-2024)** estão respondendo a esses desafios.
         A análise foi baseada em dados do Instituto Alpargatas, do **INEP (Censo Escolar)** e do **IDEB**, resultando em uma **métrica de urgência** para a priorização de ações."
-        "A métrica de *Grau de Urgência* combina **evasão** e **reprovação**, apoiando a priorização de ações."""
+        A métrica de 8*Grau de Urgência** combina **evasão** e **reprovação**, apoiando a priorização de ações."""
     )
     st.header("🧭 Metodologia de Análise")
     st.write(
         """Para alcançar o objetivo, a análise seguiu uma metodologia focada na criação de um **ranking de municípios críticos**.
-        A abordagem principal foi o desenvolvimento de uma métrica de **"Grau de Urgência" educacional**, que permitiu classificar as cidades e direcionar os esforços de forma estratégica.
+        A abordagem principal foi o desenvolvimento de uma métrica de **Grau de Urgência educacional**, que permitiu classificar as cidades e direcionar os esforços de forma estratégica.
         A análise consolidou dados de desempenho escolar, **taxas de evasão** e **aprovação** para gerar um índice que reflete a necessidade de intervenção em cada localidade.
         """
     )
@@ -362,6 +362,7 @@ with tab_diag:
             st.code("\n".join([f"{a}: {c}" for a,c in sorted(mapping.items())]), language="text")
         except Exception as e:
             st.warning(f"{nome}: {e}")
+
 
 
 
