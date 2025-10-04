@@ -1,20 +1,20 @@
 # final_alpa.py
-# App: Instituto Alpargatas — Painel Municípios (sem Dados_alpa)
-# - Mantém a base que rodou
-# - Ajustes pedidos: tabela sem None + formatação %, e evolução agregada/legível
+# Painel Municípios (sem Dados_alpa) + injeção de urgentes.csv
+# - lê INEP (anos_iniciais.xlsx / anos_finais.xlsx / ensino_medio.xlsx)
+# - injeta evasão/urgência a partir de dados/urgentes.csv
+# - KPIs e gráficos (com smoothing opcional)
+# - nulos -> mediana da coluna (nunca zero)
 
 import os, re, unicodedata
-from pathlib import Path
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 # ---------------- Caminhos ----------------
-ARQ_INICIAIS  = "dados/anos_iniciais.xlsx"
-ARQ_FINAIS    = "dados/anos_finais.xlsx"
-ARQ_MEDIO     = "dados/ensino_medio.xlsx"
-ARQ_URGENTES  = "dados/urgentes.csv"   # injeção manual de evasão/urgência
+ARQ_INICIAIS = "dados/anos_iniciais.xlsx"
+ARQ_FINAIS   = "dados/anos_finais.xlsx"
+ARQ_MEDIO    = "dados/ensino_medio.xlsx"
+ARQ_URGENTES = "dados/urgentes.csv"   # injeção manual
 
 # ---------------- Cidades alvo (sem Mixing Center) ----------------
 CIDADES_ALP = [
@@ -22,7 +22,8 @@ CIDADES_ALP = [
     "CARPINA","CATURITÉ","GUARABIRA","INGÁ","ITATUBA","JOÃO PESSOA",
     "LAGOA SECA","MOGEIRO","MONTES CLAROS","QUEIMADAS","SANTA RITA",
     "SÃO PAULO","SERRA REDONDA","BAÍA DA TRAIÇÃO"
-]
+]  # 18 cidades
+
 # ---------------- Utils ----------------
 def nrm(x):
     if pd.isna(x): return ""
@@ -34,6 +35,7 @@ def nrm(x):
 CIDADES_NORM = {nrm(c) for c in CIDADES_ALP}
 
 def achar_header(path, max_rows=80):
+    """Acha a linha de cabeçalho (onde aparecem UF + CODIGO + NOME)."""
     tmp = pd.read_excel(path, header=None, nrows=max_rows)
     for i, row in tmp.iterrows():
         vals = [nrm(v) for v in row.tolist()]
@@ -44,6 +46,7 @@ def achar_header(path, max_rows=80):
     return 0
 
 def colmap_padrao(df):
+    """Mapeia para NO_UF, CO_MUNICIPIO, NO_MUNICIPIO (independente de acento)."""
     alvo = {
         "NO_UF": {"SIGLA DA UF","UF","SIGLA_UF","NO_UF"},
         "CO_MUNICIPIO": {"CODIGO DO MUNICIPIO","CODIGO DO MUNICÍPIO","CO_MUNICIPIO",
@@ -64,15 +67,23 @@ def colmap_padrao(df):
     return inv
 
 def to_num(s):
-    # robusto contra "None", "-", "%" e vírgula decimal
-    ser = pd.Series(s).astype(str).str.strip()
-    ser = ser.replace({"": np.nan, "None": np.nan, "NONE": np.nan, "-": np.nan})
-    ser = (ser.str.replace("%","", regex=False)
-              .str.replace("\u2212","-", regex=False)
-              .str.replace(",", ".", regex=False))
-    return pd.to_numeric(ser, errors="coerce")
+    return pd.to_numeric(
+        pd.Series(s).astype(str)
+        .str.replace("%","", regex=False)
+        .str.replace("\u2212","-", regex=False)   # menos unicode
+        .str.replace(",", ".", regex=False),
+        errors="coerce"
+    )
 
 def mapear_colunas_indicadores(df):
+    """
+    Procura colunas de aprovação/rendimento por ano.
+    Aceita exemplos:
+      - 'VL_INDICADOR_REND_2023'
+      - 'Taxa de Aprovação 2021 (%)'
+      - 'TX_APROVACAO_2019'
+    Retorna {ano:int -> nome_col:str}
+    """
     mapping = {}
     for col in df.columns:
         s = nrm(col)
@@ -114,7 +125,7 @@ def media_por_municipio(df, rotulo):
     return out, ano
 
 def evolucao_long(df):
-    """wide -> long (CO_MUNICIPIO, ANO, VALOR) com mapeamento robusto."""
+    """wide -> long (CO_MUNICIPIO, ANO, VALOR) usando mapeamento robusto."""
     _, _, mapping = encontrar_col_indicador_mais_recente(df)
     if not mapping:
         return pd.DataFrame(columns=["CO_MUNICIPIO","ANO","VALOR"])
@@ -128,12 +139,25 @@ def evolucao_long(df):
                     var_name="COL", value_name="VALOR")
     long["ANO"] = long["COL"].str.extract(r"(\d{4})").astype(int)
     long = long.drop(columns=["COL"])
-    # média por ano para evitar duplicidade (legibilidade do gráfico)
-    long = (long.groupby(["CO_MUNICIPIO","ANO"], as_index=False)["VALOR"]
-                 .mean())
     return long
 
-# ---------- URGENTES.CSV ----------
+def anos_disponiveis(*dfs):
+    anos = set()
+    for d in dfs:
+        anos |= set(mapear_colunas_indicadores(d).keys())
+    if not anos:
+        return 2005, 2023
+    return min(anos), max(anos)
+
+def fill_with_median(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """Preenche NA pela mediana da própria coluna (quando existir)."""
+    for c in cols:
+        if c in df.columns:
+            ser = pd.to_numeric(df[c], errors="coerce")
+            med = ser.median()
+            df[c] = ser.fillna(med)
+    return df
+
 def ler_urgentes(path_csv: str) -> pd.DataFrame:
     if not os.path.exists(path_csv):
         return pd.DataFrame()
@@ -144,7 +168,7 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
     except Exception:
         u = pd.read_csv(path_csv, sep=";")
 
-    # renomes comuns -> padroniza nomes
+    # renomes comuns
     ren = {}
     for c in list(u.columns):
         cn = nrm(c)
@@ -153,20 +177,27 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
             ren[c] = "Evasao_Fundamental"
         if cn in {"EVASAO-MEDIO","EVASAO - MEDIO","EVASAO MEDIO"}:
             ren[c] = "Evasao_Medio"
-        if cn in {"MEDIA_HISTORICA_%","MEDIA HISTORICA %","MEDIA-HISTORICA","MEDIA_HISTORICA"}:
+        if cn in {"MEDIA_HISTORICA","MEDIA HISTORICA","MEDIA-HISTORICA","MEDIA HISTORICA %","MEDIA_HISTORICA_%","MEDIA HISTORICA (%)","MEDIA_HISTORICA(%)"}:
             ren[c] = "MEDIA_HISTORICA_%"
+        if cn in {"MUNICIPIO_CHAVE"}:
+            ren[c] = "MUNICIPIO_CHAVE"
     if ren:
         u = u.rename(columns=ren)
 
     for col in [c for c in ["NO_UF","MUNICIPIO_NOME_ALP","NO_MUNICIPIO","NO_LOCALIZACAO","NO_DEPENDENCIA"] if c in u]:
         u[col] = u[col].astype(str).str.strip()
 
-    base_nome = u["MUNICIPIO_NOME_ALP"] if "MUNICIPIO_NOME_ALP" in u else u.get("NO_MUNICIPIO")
-    if base_nome is None:
+    base_nome = None
+    if "MUNICIPIO_NOME_ALP" in u:
+        base_nome = u["MUNICIPIO_NOME_ALP"]
+    elif "NO_MUNICIPIO" in u:
+        base_nome = u["NO_MUNICIPIO"]
+    else:
         return pd.DataFrame()
+
     u["NORM_MUN"] = base_nome.apply(nrm)
 
-    # preferir Total/Total quando existir
+    # preferir Total/Total
     if "NO_LOCALIZACAO" in u and "NO_DEPENDENCIA" in u:
         loc = u["NO_LOCALIZACAO"].fillna("").str.upper()
         dep = u["NO_DEPENDENCIA"].fillna("").str.upper()
@@ -189,62 +220,65 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
     return u
 
 # ---------------- App ----------------
-st.set_page_config(page_title="Instituto Alpargatas — Painel (hotfix)", layout="wide")
-
+st.set_page_config(page_title="Instituto Alpargatas — Painel", layout="wide")
 st.title("📊 Instituto Alpargatas — Painel Municípios (sem Dados_alpa)")
+
 with st.expander("📁 Arquivos esperados em `dados/`", expanded=False):
     for p in [ARQ_INICIAIS, ARQ_FINAIS, ARQ_MEDIO, ARQ_URGENTES]:
         st.write(("✅" if os.path.exists(p) else "❌"), p)
-    if os.path.isdir("dados"):
-        st.code("\n".join(sorted(os.listdir("dados"))), language="text")
+    if os.path.exists("dados"):
+        st.code("\n".join(os.listdir("dados")), language="text")
 
 @st.cache_data(show_spinner=True)
 def build_data():
-    # --- INEP
+    # --- Lê INEP
     df_ini = ler_planilha_inep(ARQ_INICIAIS)
     df_fin = ler_planilha_inep(ARQ_FINAIS)
     df_med = ler_planilha_inep(ARQ_MEDIO)
+    ano_min, ano_max = anos_disponiveis(df_ini, df_fin, df_med)
 
-    # Normalização + filtro Alpargatas
+    # Normalização e filtro das cidades alvo
     for df in (df_ini, df_fin, df_med):
         df["NORM_MUN"] = df["NO_MUNICIPIO"].apply(nrm)
     base = (df_ini[["NO_UF","CO_MUNICIPIO","NO_MUNICIPIO","NORM_MUN"]]
             .drop_duplicates())
     base = base[base["NORM_MUN"].isin(CIDADES_NORM)].copy()
 
-    # Médias mais recentes
-    ini, ano_ini = media_por_municipio(df_ini, "TAXA_APROVACAO_INICIAIS")
-    fin, ano_fin = media_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS")
-    med, ano_med = media_por_municipio(df_med, "TAXA_APROVACAO_MEDIO")
+    # Médias (ano mais recente de cada arquivo)
+    ini, _ = media_por_municipio(df_ini, "TAXA_APROVACAO_INICIAIS")
+    fin, _ = media_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS")
+    med, _ = media_por_municipio(df_med, "TAXA_APROVACAO_MEDIO")
 
     base = (base.merge(ini, on="CO_MUNICIPIO", how="left")
                  .merge(fin, on="CO_MUNICIPIO", how="left")
                  .merge(med, on="CO_MUNICIPIO", how="left"))
 
-    # Fração -> %
+    # para %
     for c in ["TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS","TAXA_APROVACAO_MEDIO"]:
         if c in base.columns:
-            base[c + "_%"] = (base[c]*100).round(2)
+            base[c + "_%"] = (base[c]*100)
 
-    # Evolução (já agregada por ano)
-    long_ini = evolucao_long(df_ini).rename(columns={"VALOR":"APROVACAO_INICIAIS"})
-    long_fin = evolucao_long(df_fin).rename(columns={"VALOR":"APROVACAO_FINAIS"})
-    long_med = evolucao_long(df_med).rename(columns={"VALOR":"APROVACAO_MEDIO"})
+    # Evolução (todas as cidades do recorte)
+    long_ini = evolucao_long(df_ini)
+    long_fin = evolucao_long(df_fin)
+    long_med = evolucao_long(df_med)
 
-    evol = (long_ini.merge(long_fin, on=["CO_MUNICIPIO","ANO"], how="outer")
-                   .merge(long_med, on=["CO_MUNICIPIO","ANO"], how="outer"))
+    evol = (long_ini.rename(columns={"VALOR":"APROVACAO_INICIAIS"})
+                 .merge(long_fin.rename(columns={"VALOR":"APROVACAO_FINAIS"}),
+                        on=["CO_MUNICIPIO","ANO"], how="outer")
+                 .merge(long_med.rename(columns={"VALOR":"APROVACAO_MEDIO"}),
+                        on=["CO_MUNICIPIO","ANO"], how="outer"))
+
     evol = evol.merge(base[["CO_MUNICIPIO","NO_MUNICIPIO","NO_UF","NORM_MUN"]].drop_duplicates(),
                       on="CO_MUNICIPIO", how="left")
     evol = evol[evol["NORM_MUN"].isin(CIDADES_NORM)].copy()
     for c in ["APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO"]:
         if c in evol.columns:
-            evol[c + "_%"] = (evol[c]*100).round(2)
+            evol[c + "_%"] = (evol[c]*100)
 
-    # --- URGENTES.CSV (injeção manual)
+    # --- Injeção URGENTES
     urg = ler_urgentes(ARQ_URGENTES)
     if not urg.empty:
-        urg["NO_UF"] = urg["NO_UF"].fillna("")
-        urg["NORM_MUN"] = urg["NORM_MUN"].fillna("")
         urgentes_set = set(urg["NORM_MUN"].tolist())
         base = base[base["NORM_MUN"].isin(urgentes_set)].copy()
         evol = evol[evol["NORM_MUN"].isin(urgentes_set)].copy()
@@ -257,112 +291,92 @@ def build_data():
         ] if c in urg.columns]
         inj = urg[cols_injetar].drop_duplicates(["NO_UF","NORM_MUN"])
 
-        base = base.merge(inj, on=["NO_UF","NORM_MUN"], how="left", suffixes=("", "_inj"))
-        if "NO_MUNICIPIO_inj" in base.columns:
-            base["NO_MUNICIPIO"] = base["NO_MUNICIPIO"].fillna(base["NO_MUNICIPIO_inj"])
-            base.drop(columns=["NO_MUNICIPIO_inj"], inplace=True)
+        base = base.merge(inj, on=["NO_UF","NORM_MUN"], how="left", suffixes=("","_urg"))
+        if "NO_MUNICIPIO_urg" in base.columns:
+            base["NO_MUNICIPIO"] = base["NO_MUNICIPIO"].fillna(base["NO_MUNICIPIO_urg"])
+            base.drop(columns=["NO_MUNICIPIO_urg"], inplace=True)
 
-    # KPIs extras
-    base["APROVACAO_MEDIA_GERAL_%"] = base[
-        [c for c in ["TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%"] if c in base]
-    ].mean(axis=1, skipna=True)
+        # reprovação caso não venha
+        if "Reprovacao_Iniciais" not in base:
+            base["Reprovacao_Iniciais"] = 100 - base["TAXA_APROVACAO_INICIAIS_%"]
+        if "Reprovacao_Finais" not in base:
+            base["Reprovacao_Finais"] = 100 - base["TAXA_APROVACAO_FINAIS_%"]
 
-    meta = {"ANO_INI": ano_ini, "ANO_FIN": ano_fin, "ANO_MED": ano_med}
+        base["APROVACAO_MEDIA_GERAL_%"] = base[
+            [c for c in ["TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%"] if c in base]
+        ].mean(axis=1, skipna=True)
+
+        # --- nulos -> mediana (nunca zero)
+        base = fill_with_median(base, [
+            "TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%",
+            "Evasao_Fundamental","Evasao_Medio",
+            "Reprovacao_Iniciais","Reprovacao_Finais","Urgencia",
+            "APROVACAO_MEDIA_GERAL_%","MEDIA_HISTORICA_%"
+        ])
+
+    # arredondar legível
+    for c in [col for col in base.columns if col.endswith("%")]:
+        base[c] = pd.to_numeric(base[c], errors="coerce").round(2)
+
+    meta = {"ANO_INI": 2005, "ANO_FIN": 2023, "n_pesquisa": 18,
+            "ano_min": 2005, "ano_max": 2023}
+    # se quiser detectar automaticamente: meta.update({"ano_min":ano_min,"ano_max":ano_max})
     return base, evol, meta
 
 with st.spinner("Carregando e processando…"):
     base, evol, meta = build_data()
 
-# ====== Aba: Visão geral ======
-tab_intro, tab_graficos, tab_tabelas, tab_diag = st.tabs(
-    ["Visão geral", "Gráficos", "Tabelas", "Diagnóstico"]
+# ---------------- KPIs topo ----------------
+c1, c2, c3 = st.columns(3)
+with c1: st.metric("Municípios presentes na pesquisa", f"{meta.get('n_pesquisa', 18)}")
+with c2: st.metric("Ano (Inicial)", meta.get("ano_min", 2005))
+with c3: st.metric("Ano (Final)",   meta.get("ano_max", 2023))
+
+st.markdown("## 📈 Evolução por município (aprov. %)")
+munis_opts = sorted(base["NO_MUNICIPIO"].dropna().unique().tolist())
+mun = st.selectbox("Escolha um município", munis_opts, index=0 if munis_opts else None)
+smooth = st.checkbox("Suavizar (média móvel 3 anos)", value=False)
+
+# ----- série por município (conserta gráfico vazio) -----
+if mun:
+    e = evol[evol["NO_MUNICIPIO"] == mun].copy()
+    cols = [c for c in ["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%","APROVACAO_MEDIO_%"] if c in e.columns]
+    # mantém linha mesmo que alguma etapa esteja ausente
+    e = e.dropna(subset=cols, how="all").sort_values("ANO")
+    if not e.empty:
+        if smooth:
+            for c in cols:
+                e[c] = pd.to_numeric(e[c], errors="coerce").rolling(3, min_periods=1).mean()
+
+        e_long = e.melt(id_vars=["ANO"], value_vars=cols, var_name="Etapa", value_name="Aprovação (%)")
+        e_long["Etapa"] = (e_long["Etapa"].str.replace("_%","", regex=False)
+                                         .str.replace("APROVACAO_","", regex=False)
+                                         .str.title())
+        fig_e = px.line(e_long, x="ANO", y="Aprovação (%)", color="Etapa", markers=True)
+        fig_e.update_layout(xaxis_title="Ano", yaxis_title="Aprovação (%)", legend_title="Etapa")
+        st.plotly_chart(fig_e, use_container_width=True)
+    else:
+        st.info("Sem série histórica disponível para este município.")
+
+st.markdown("## 📊 Tabela (com urgência & evasão)")
+cols_show = [
+    "NO_UF","NO_MUNICIPIO",
+    "TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%",
+    "Evasao_Fundamental","Reprovacao_Iniciais","Reprovacao_Finais","Urgencia",
+    "APROVACAO_MEDIA_GERAL_%","MEDIA_HISTORICA_%"
+]
+cols_show = [c for c in cols_show if c in base.columns]
+st.dataframe(
+    base[cols_show].sort_values(["NO_UF","NO_MUNICIPIO"]).reset_index(drop=True),
+    use_container_width=True
 )
 
-with tab_intro:
-    st.header("📌 Introdução")
-    st.write(
-        "Este painel consolida dados do INEP/IDEB e do Instituto Alpargatas para mapear **municípios com maior urgência educacional**. "
-        "A métrica de *Grau de Urgência* combina **evasão** e **reprovação**, apoiando a priorização de ações."
-    )
-    st.header("🧭 Metodologia de Análise")
-    st.write(
-        "1) Padronizamos planilhas do INEP; 2) Calculamos aprovações por etapa (iniciais, finais, médio); "
-        "3) Injetamos a tabela **urgentes.csv** com evasão e urgência; 4) Construímos séries históricas por município."
-    )
-
-with tab_graficos:
-    # KPIs
-    c1,c2,c3,c4 = st.columns(4)
-    with c1: st.metric("Municípios no recorte", f"{base['CO_MUNICIPIO'].nunique()}")
-    with c2: st.metric("Ano (Iniciais)", meta["ANO_INI"])
-    with c3: st.metric("Ano (Finais)",   meta["ANO_FIN"])
-    with c4: st.metric("Ano (Médio)",    meta["ANO_MED"])
-
-    st.subheader("📈 Evolução por município (aprov. %)")
-    # escolha de município
-    mun = st.selectbox("Escolha um município", sorted(base["NO_MUNICIPIO"].dropna().unique()))
-    suavizar = st.checkbox("Suavizar (média móvel 3 anos)", value=False)
-
-    e = evol[evol["NO_MUNICIPIO"] == mun].copy()
-    # agrega por ano para legibilidade
-    cols_etapas = [c for c in ["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%","APROVACAO_MEDIO_%"] if c in e]
-    # pivota para long e agrega (1 ponto por ano/etapa)
-    e_long = (e.melt(id_vars=["ANO"], value_vars=cols_etapas, var_name="Etapa", value_name="Aprovacao")
-                .dropna(subset=["Aprovacao"]))
-    e_long["Etapa"] = (e_long["Etapa"].str.replace("_%","", regex=False)
-                                     .str.replace("APROVACAO_","", regex=False)
-                                     .str.title())
-    e_long = (e_long.groupby(["Etapa","ANO"], as_index=False)["Aprovacao"].mean())
-    e_long = e_long.sort_values(["Etapa","ANO"])
-
-    # suavização opcional
-    if suavizar and not e_long.empty:
-        e_long["Aprovacao"] = (e_long
-                               .groupby("Etapa")["Aprovacao"]
-                               .transform(lambda s: s.rolling(3, min_periods=1).mean())
-                              )
-
-    fig2 = px.line(
-        e_long, x="ANO", y="Aprovacao", color="Etapa", markers=True,
-        category_orders={"ANO": sorted(e_long["ANO"].unique())},
-        labels={"Aprovacao":"Aprovação (%)", "ANO":"Ano"}
-    )
-    fig2.update_yaxes(range=[0,100], tickformat=".0f")
-    st.plotly_chart(fig2, use_container_width=True)
-
-with tab_tabelas:
-    st.subheader("📋 Tabela (com urgência & evasão)")
-
-    # ----- limpeza final para exibição bonita -----
-    show_cols = [
-        "NO_UF","NO_MUNICIPIO",
-        "TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%",
-        "Evasao_Fundamental","Reprovacao_Iniciais","Reprovacao_Finais","Urgencia",
-        "APROVACAO_MEDIA_GERAL_%","MEDIA_HISTORICA_%"
-    ]
-    show_cols = [c for c in show_cols if c in base.columns]
-    tbl = base[show_cols].copy()
-
-    # converte "None"/NaN -> 0 (numéricos) e formata
-    for c in tbl.columns:
-        if pd.api.types.is_numeric_dtype(tbl[c]):
-            tbl[c] = pd.to_numeric(tbl[c], errors="coerce").fillna(0.0).round(2)
-        else:
-            # texto: vazio -> "—"
-            tbl[c] = tbl[c].astype(str).replace({"nan":"—","None":"—"}).replace("", "—")
-
-    st.dataframe(
-        tbl.sort_values(["NO_UF","NO_MUNICIPIO"]).reset_index(drop=True),
-        use_container_width=True
-    )
-
-with tab_diag:
-    st.markdown("### 🔎 Debug: colunas de indicadores reconhecidas")
+# --- Diagnóstico opcional ---
+with st.expander("🔎 Debug: anos detectados por etapa"):
     for nome, caminho in [("Iniciais", ARQ_INICIAIS), ("Finais", ARQ_FINAIS), ("Médio", ARQ_MEDIO)]:
         try:
             df = pd.read_excel(caminho, header=achar_header(caminho))
             mapping = mapear_colunas_indicadores(df)
             st.write(f"**{nome}** → Anos detectados:", sorted(mapping.keys()))
-            st.code("\n".join([f"{a}: {c}" for a,c in sorted(mapping.items())]), language="text")
         except Exception as e:
             st.warning(f"{nome}: {e}")
