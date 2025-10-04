@@ -271,21 +271,25 @@ tab_intro, tab_graficos, tab_tabelas, tab_diag = st.tabs(
 with tab_intro:
     st.header("📌 Introdução")
     st.write(
-        "Este painel consolida dados do INEP/IDEB e do Instituto Alpargatas para mapear **municípios com maior urgência educacional**. "
-        "A métrica de *Grau de Urgência* combina **evasão** e **reprovação**, apoiando a priorização de ações."
+        """Este site apresenta os resultados da análise de dados cujo objetivo foi **mapear os municípios com maior urgência educacional**
+        e avaliar como os projetos do **Instituto Alpargatas (2020-2024)** estão respondendo a esses desafios.
+        A análise foi baseada em dados do Instituto Alpargatas, do **INEP (Censo Escolar)** e do **IDEB**, resultando em uma **métrica de urgência** para a priorização de ações."
+        "A métrica de *Grau de Urgência* combina **evasão** e **reprovação**, apoiando a priorização de ações."""
     )
     st.header("🧭 Metodologia de Análise")
     st.write(
-        "1) Padronizamos planilhas do INEP; 2) Calculamos aprovações por etapa; "
-        "3) Injetamos **urgentes.csv** (evasão/urgência); 4) Construímos séries históricas por município."
+        """Para alcançar o objetivo, a análise seguiu uma metodologia focada na criação de um **ranking de municípios críticos**.
+        A abordagem principal foi o desenvolvimento de uma métrica de **"Grau de Urgência" educacional**, que permitiu classificar as cidades e direcionar os esforços de forma estratégica.
+        A análise consolidou dados de desempenho escolar, **taxas de evasão** e **aprovação** para gerar um índice que reflete a necessidade de intervenção em cada localidade.
+        """
     )
 
 with tab_graficos:
     c1,c2,c3,c4 = st.columns(4)
     with c1: st.metric("Municípios presentes na pesquisa", f"{CIDADES_PESQUISA_FIXO}")
-    with c2: st.metric("Ano (Iniciais)", 2005)
-    with c3: st.metric("Ano (Finais)",   2023)
-    with c4: st.metric("Ano (Médio)",    2023)
+    with c2: st.metric("Ano (Iniciais)", 2005-2023)
+    with c3: st.metric("Ano (Finais)",  2005-2023)
+    with c4: st.metric("Ano (Médio)",  2005-2023)
 
     st.subheader("🧭 Evolução por município (aprov. %)")
     mun = st.selectbox("Escolha um município", sorted(base["NO_MUNICIPIO"].dropna().unique()))
@@ -358,3 +362,4 @@ with tab_diag:
             st.code("\n".join([f"{a}: {c}" for a,c in sorted(mapping.items())]), language="text")
         except Exception as e:
             st.warning(f"{nome}: {e}")
+
