@@ -1,11 +1,8 @@
 # final_alpa.py
 # App: Instituto Alpargatas — Painel Municípios (sem Dados_alpa)
-# - Mantém a base que rodou
-# - Ajustes: tabela usa mediana no lugar de 0; gráfico fallback no modelo “Tendência Geral”
-# - KPIs: "Municípios presentes na pesquisa"=18; anos 2005/2023
+# Ajustes: escala 0–100 robusta (sem x100 duplo), gráfico nunca vazio, tabela usa mediana
 
 import os, re, unicodedata
-from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -15,16 +12,16 @@ import streamlit as st
 ARQ_INICIAIS  = "dados/anos_iniciais.xlsx"
 ARQ_FINAIS    = "dados/anos_finais.xlsx"
 ARQ_MEDIO     = "dados/ensino_medio.xlsx"
-ARQ_URGENTES  = "dados/urgentes.csv"   # injeção manual de evasão/urgência
+ARQ_URGENTES  = "dados/urgentes.csv"
 
-# ---------------- Cidades alvo (sem Mixing Center) ----------------
+# ---------------- Cidades alvo ----------------
 CIDADES_ALP = [
     "ALAGOA NOVA","BANANEIRAS","CABACEIRAS","CAMPINA GRANDE",
     "CARPINA","CATURITÉ","GUARABIRA","INGÁ","ITATUBA","JOÃO PESSOA",
     "LAGOA SECA","MOGEIRO","MONTES CLAROS","QUEIMADAS","SANTA RITA",
     "SÃO PAULO","SERRA REDONDA","BAÍA DA TRAIÇÃO"
 ]
-CIDADES_PESQUISA_FIXO = 18  # pedido
+CIDADES_PESQUISA_FIXO = 18  # KPI fixo
 
 # ---------------- Utils ----------------
 def nrm(x):
@@ -67,13 +64,24 @@ def colmap_padrao(df):
     return inv
 
 def to_num(s):
-    # robusto contra "None", "-", "%" e vírgula decimal
     ser = pd.Series(s).astype(str).str.strip()
     ser = ser.replace({"": np.nan, "None": np.nan, "NONE": np.nan, "-": np.nan})
     ser = (ser.str.replace("%","", regex=False)
               .str.replace("\u2212","-", regex=False)
               .str.replace(",", ".", regex=False))
     return pd.to_numeric(ser, errors="coerce")
+
+# ---- NOVO: garante escala 0–100 (corrige 0–1 e 0–10000) ----
+def to_0_100(series):
+    s = pd.to_numeric(series, errors="coerce")
+    med = np.nanmedian(s)
+    if np.isnan(med):
+        return s
+    if med <= 1.5:          # dados em fração 0–1
+        s = s * 100.0
+    elif med > 200:         # dados vieram como 9700 etc
+        s = s / 100.0
+    return s.clip(lower=0, upper=100)
 
 def mapear_colunas_indicadores(df):
     mapping = {}
@@ -83,9 +91,7 @@ def mapear_colunas_indicadores(df):
         if not m:
             continue
         ano = int(m.group(1))
-        if ano < 2000 or ano > 2100:
-            continue
-        if ("APROV" in s) or ("INDICADOR" in s and "REND" in s) or s.startswith("VL_INDICADOR_REND_"):
+        if 2000 <= ano <= 2100 and (("APROV" in s) or ("INDICADOR" in s and "REND" in s) or s.startswith("VL_INDICADOR_REND_")):
             mapping[ano] = col
     return mapping
 
@@ -117,7 +123,6 @@ def media_por_municipio(df, rotulo):
     return out, ano
 
 def evolucao_long(df):
-    """wide -> long (CO_MUNICIPIO, ANO, VALOR) com mapeamento robusto."""
     _, _, mapping = encontrar_col_indicador_mais_recente(df)
     if not mapping:
         return pd.DataFrame(columns=["CO_MUNICIPIO","ANO","VALOR"])
@@ -131,12 +136,9 @@ def evolucao_long(df):
                     var_name="COL", value_name="VALOR")
     long["ANO"] = long["COL"].str.extract(r"(\d{4})").astype(int)
     long = long.drop(columns=["COL"])
-    # média por ano para evitar duplicidade (legibilidade do gráfico)
-    long = (long.groupby(["CO_MUNICIPIO","ANO"], as_index=False)["VALOR"]
-                 .mean())
+    long = (long.groupby(["CO_MUNICIPIO","ANO"], as_index=False)["VALOR"].mean())
     return long
 
-# ---------- URGENTES.CSV ----------
 def ler_urgentes(path_csv: str) -> pd.DataFrame:
     if not os.path.exists(path_csv):
         return pd.DataFrame()
@@ -147,7 +149,6 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
     except Exception:
         u = pd.read_csv(path_csv, sep=";")
 
-    # renomes comuns -> padroniza nomes
     ren = {}
     for c in list(u.columns):
         cn = nrm(c)
@@ -169,7 +170,6 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
         return pd.DataFrame()
     u["NORM_MUN"] = base_nome.apply(nrm)
 
-    # preferir Total/Total quando existir
     if "NO_LOCALIZACAO" in u and "NO_DEPENDENCIA" in u:
         loc = u["NO_LOCALIZACAO"].fillna("").str.upper()
         dep = u["NO_DEPENDENCIA"].fillna("").str.upper()
@@ -179,15 +179,11 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
     else:
         u = u.drop_duplicates(subset=["NORM_MUN","NO_UF"], keep="first")
 
-    # numéricos
-    num_cols = [
-        "Evasao_Fundamental","Evasao_Medio",
-        "TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS",
-        "Reprovacao_Iniciais","Reprovacao_Finais",
-        "Urgencia","MEDIA_HISTORICA_%"
-    ]
-    for c in [c for c in num_cols if c in u]:
-        u[c] = to_num(u[c])
+    for c in ["Evasao_Fundamental","Evasao_Medio","TAXA_APROVACAO_INICIAIS",
+              "TAXA_APROVACAO_FINAIS","Reprovacao_Iniciais","Reprovacao_Finais",
+              "Urgencia","MEDIA_HISTORICA_%"]:
+        if c in u:
+            u[c] = to_num(u[c])
 
     return u
 
@@ -198,24 +194,19 @@ st.title("📊 Instituto Alpargatas — Painel Municípios (sem Dados_alpa)")
 with st.expander("📁 Arquivos esperados em `dados/`", expanded=False):
     for p in [ARQ_INICIAIS, ARQ_FINAIS, ARQ_MEDIO, ARQ_URGENTES]:
         st.write(("✅" if os.path.exists(p) else "❌"), p)
-    if os.path.isdir("dados"):
-        st.code("\n".join(sorted(os.listdir("dados"))), language="text")
 
 @st.cache_data(show_spinner=True)
 def build_data():
-    # --- INEP
     df_ini = ler_planilha_inep(ARQ_INICIAIS)
     df_fin = ler_planilha_inep(ARQ_FINAIS)
     df_med = ler_planilha_inep(ARQ_MEDIO)
 
-    # Normalização + filtro Alpargatas
     for df in (df_ini, df_fin, df_med):
         df["NORM_MUN"] = df["NO_MUNICIPIO"].apply(nrm)
     base = (df_ini[["NO_UF","CO_MUNICIPIO","NO_MUNICIPIO","NORM_MUN"]]
             .drop_duplicates())
     base = base[base["NORM_MUN"].isin(CIDADES_NORM)].copy()
 
-    # Médias mais recentes
     ini, ano_ini = media_por_municipio(df_ini, "TAXA_APROVACAO_INICIAIS")
     fin, ano_fin = media_por_municipio(df_fin, "TAXA_APROVACAO_FINAIS")
     med, ano_med = media_por_municipio(df_med, "TAXA_APROVACAO_MEDIO")
@@ -224,12 +215,11 @@ def build_data():
                  .merge(fin, on="CO_MUNICIPIO", how="left")
                  .merge(med, on="CO_MUNICIPIO", how="left"))
 
-    # Fração -> % (0–100)
+    # ---- CORRIGIDO: garantir 0–100 sem multiplicar duas vezes
     for c in ["TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS","TAXA_APROVACAO_MEDIO"]:
-        if c in base.columns:
-            base[c + "_%"] = (base[c]*100).round(2)
+        if c in base:
+            base[c + "_%"] = to_0_100(base[c])
 
-    # Evolução (já agregada por ano)
     long_ini = evolucao_long(df_ini).rename(columns={"VALOR":"APROVACAO_INICIAIS"})
     long_fin = evolucao_long(df_fin).rename(columns={"VALOR":"APROVACAO_FINAIS"})
     long_med = evolucao_long(df_med).rename(columns={"VALOR":"APROVACAO_MEDIO"})
@@ -239,16 +229,15 @@ def build_data():
     evol = evol.merge(base[["CO_MUNICIPIO","NO_MUNICIPIO","NO_UF","NORM_MUN"]].drop_duplicates(),
                       on="CO_MUNICIPIO", how="left")
     evol = evol[evol["NORM_MUN"].isin(CIDADES_NORM)].copy()
-    for c in ["APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO"]:
-        if c in evol.columns:
-            evol[c + "_%"] = (evol[c]*100).round(2)
 
-    # --- URGENTES.CSV (injeção manual)
+    for c in ["APROVACAO_INICIAIS","APROVACAO_FINAIS","APROVACAO_MEDIO"]:
+        if c in evol:
+            evol[c + "_%"] = to_0_100(evol[c])
+
+    # injeção urgentes (mantida)
     urg = ler_urgentes(ARQ_URGENTES)
     if not urg.empty:
-        urg["NO_UF"] = urg["NO_UF"].fillna("")
-        urg["NORM_MUN"] = urg["NORM_MUN"].fillna("")
-        urgentes_set = set(urg["NORM_MUN"].tolist())
+        urgentes_set = set(urg["NORM_MUN"].fillna("").tolist())
         base = base[base["NORM_MUN"].isin(urgentes_set)].copy()
         evol = evol[evol["NORM_MUN"].isin(urgentes_set)].copy()
 
@@ -265,7 +254,6 @@ def build_data():
             base["NO_MUNICIPIO"] = base["NO_MUNICIPIO"].fillna(base["NO_MUNICIPIO_inj"])
             base.drop(columns=["NO_MUNICIPIO_inj"], inplace=True)
 
-    # KPIs extras
     base["APROVACAO_MEDIA_GERAL_%"] = base[
         [c for c in ["TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%"] if c in base]
     ].mean(axis=1, skipna=True)
@@ -276,7 +264,6 @@ def build_data():
 with st.spinner("Carregando e processando…"):
     base, evol, meta = build_data()
 
-# ====== Aba: Visão geral / Gráficos / Tabelas / Diagnóstico ======
 tab_intro, tab_graficos, tab_tabelas, tab_diag = st.tabs(
     ["Visão geral", "Gráficos", "Tabelas", "Diagnóstico"]
 )
@@ -289,12 +276,11 @@ with tab_intro:
     )
     st.header("🧭 Metodologia de Análise")
     st.write(
-        "1) Padronizamos planilhas do INEP; 2) Calculamos aprovações por etapa (iniciais, finais, médio); "
-        "3) Injetamos a tabela **urgentes.csv** com evasão e urgência; 4) Construímos séries históricas por município."
+        "1) Padronizamos planilhas do INEP; 2) Calculamos aprovações por etapa; "
+        "3) Injetamos **urgentes.csv** (evasão/urgência); 4) Construímos séries históricas por município."
     )
 
 with tab_graficos:
-    # KPIs (fixos conforme pedido)
     c1,c2,c3,c4 = st.columns(4)
     with c1: st.metric("Municípios presentes na pesquisa", f"{CIDADES_PESQUISA_FIXO}")
     with c2: st.metric("Ano (Iniciais)", 2005)
@@ -307,47 +293,40 @@ with tab_graficos:
 
     e = evol[evol["NO_MUNICIPIO"] == mun].copy()
     cols_etapas = [c for c in ["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%","APROVACAO_MEDIO_%"] if c in e]
-
-    # monta long e agrega por ano
     e_long = (e.melt(id_vars=["ANO"], value_vars=cols_etapas, var_name="Etapa", value_name="Aprovacao")
                 .dropna(subset=["Aprovacao"]))
     if not e_long.empty:
         e_long["Etapa"] = (e_long["Etapa"].str.replace("_%","", regex=False)
                                          .str.replace("APROVACAO_","", regex=False)
                                          .str.title())
-        e_long = (e_long.groupby(["Etapa","ANO"], as_index=False)["Aprovacao"].mean())
-        e_long = e_long.sort_values(["Etapa","ANO"])
+        e_long = (e_long.groupby(["Etapa","ANO"], as_index=False)["Aprovacao"].mean()
+                          .sort_values(["Etapa","ANO"]))
         if suavizar:
-            e_long["Aprovacao"] = (e_long
-                                   .groupby("Etapa")["Aprovacao"]
-                                   .transform(lambda s: s.rolling(3, min_periods=1).mean()))
-        fig2 = px.line(
-            e_long, x="ANO", y="Aprovacao", color="Etapa", markers=True,
-            labels={"Aprovacao":"Aprovação (%)", "ANO":"Ano"}
-        )
+            e_long["Aprovacao"] = (e_long.groupby("Etapa")["Aprovacao"]
+                                            .transform(lambda s: s.rolling(3, min_periods=1).mean()))
+        fig2 = px.line(e_long, x="ANO", y="Aprovacao", color="Etapa", markers=True,
+                       labels={"Aprovacao":"Aprovação (%)","ANO":"Ano"})
         fig2.update_yaxes(range=[0,100], tickformat=".0f")
         st.plotly_chart(fig2, use_container_width=True)
     else:
         st.info("Sem série legível para este município. Exibindo a tendência geral do recorte.")
 
-    # Sempre mostrar o gráfico no modelo solicitado (média do recorte)
     st.markdown("### 📊 Tendência Geral — Aprovação Iniciais vs Finais (média do recorte)")
-    geral = evol.copy()
-    serie = (geral
-             .groupby("ANO", as_index=False)[["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"]]
-             .mean(numeric_only=True))
-    serie = serie.sort_values("ANO")
-    fig_g = px.line(
-        serie.melt(id_vars="ANO", value_vars=["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"],
-                   var_name="Etapa", value_name="Aprovação (%)"),
-        x="ANO", y="Aprovação (%)", color="Etapa", markers=True
-    )
-    fig_g.update_yaxes(range=[0,100], tickformat=".0f")
-    st.plotly_chart(fig_g, use_container_width=True)
+    serie = (evol.groupby("ANO", as_index=False)[["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"]]
+                .mean(numeric_only=True).dropna())
+    if not serie.empty:
+        fig_g = px.line(
+            serie.melt(id_vars="ANO", value_vars=["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"],
+                       var_name="Etapa", value_name="Aprovação (%)"),
+            x="ANO", y="Aprovação (%)", color="Etapa", markers=True
+        )
+        fig_g.update_yaxes(range=[0,100], tickformat=".0f")
+        st.plotly_chart(fig_g, use_container_width=True)
+    else:
+        st.warning("Sem dados agregados suficientes para o gráfico geral.")
 
 with tab_tabelas:
     st.subheader("📋 Tabela (com urgência & evasão)")
-
     show_cols = [
         "NO_UF","NO_MUNICIPIO",
         "TAXA_APROVACAO_INICIAIS_%","TAXA_APROVACAO_FINAIS_%","TAXA_APROVACAO_MEDIO_%",
@@ -357,18 +336,17 @@ with tab_tabelas:
     show_cols = [c for c in show_cols if c in base.columns]
     tbl = base[show_cols].copy()
 
-    # --------- preenche NaN com MEDIANA por coluna (pedido) ----------
+    # ---- nulos -> mediana da coluna ----
     for c in tbl.columns:
         if pd.api.types.is_numeric_dtype(tbl[c]):
-            med = pd.to_numeric(tbl[c], errors="coerce").median(skipna=True)
-            tbl[c] = pd.to_numeric(tbl[c], errors="coerce").fillna(med).round(2)
+            v = pd.to_numeric(tbl[c], errors="coerce")
+            med = v.median(skipna=True)
+            tbl[c] = v.fillna(med).round(2)
         else:
             tbl[c] = tbl[c].astype(str).replace({"nan":"—","None":"—"}).replace("", "—")
 
-    st.dataframe(
-        tbl.sort_values(["NO_UF","NO_MUNICIPIO"]).reset_index(drop=True),
-        use_container_width=True
-    )
+    st.dataframe(tbl.sort_values(["NO_UF","NO_MUNICIPIO"]).reset_index(drop=True),
+                 use_container_width=True)
 
 with tab_diag:
     st.markdown("### 🔎 Debug: colunas de indicadores reconhecidas")
