@@ -1,7 +1,8 @@
 # final_alpa.py
 # App: Instituto Alpargatas — Painel Municípios (sem Dados_alpa)
 # - Mantém a base que rodou
-# - Ajustes: KPI fixo, nulos -> mediana, gráfico sempre legível
+# - Ajustes: tabela usa mediana no lugar de 0; gráfico fallback no modelo “Tendência Geral”
+# - KPIs: "Municípios presentes na pesquisa"=18; anos 2005/2023
 
 import os, re, unicodedata
 from pathlib import Path
@@ -23,6 +24,7 @@ CIDADES_ALP = [
     "LAGOA SECA","MOGEIRO","MONTES CLAROS","QUEIMADAS","SANTA RITA",
     "SÃO PAULO","SERRA REDONDA","BAÍA DA TRAIÇÃO"
 ]
+CIDADES_PESQUISA_FIXO = 18  # pedido
 
 # ---------------- Utils ----------------
 def nrm(x):
@@ -65,6 +67,7 @@ def colmap_padrao(df):
     return inv
 
 def to_num(s):
+    # robusto contra "None", "-", "%" e vírgula decimal
     ser = pd.Series(s).astype(str).str.strip()
     ser = ser.replace({"": np.nan, "None": np.nan, "NONE": np.nan, "-": np.nan})
     ser = (ser.str.replace("%","", regex=False)
@@ -128,8 +131,9 @@ def evolucao_long(df):
                     var_name="COL", value_name="VALOR")
     long["ANO"] = long["COL"].str.extract(r"(\d{4})").astype(int)
     long = long.drop(columns=["COL"])
-    # média por ano p/ evitar duplicidade (gráfico mais limpo)
-    long = (long.groupby(["CO_MUNICIPIO","ANO"], as_index=False)["VALOR"].mean())
+    # média por ano para evitar duplicidade (legibilidade do gráfico)
+    long = (long.groupby(["CO_MUNICIPIO","ANO"], as_index=False)["VALOR"]
+                 .mean())
     return long
 
 # ---------- URGENTES.CSV ----------
@@ -143,6 +147,7 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
     except Exception:
         u = pd.read_csv(path_csv, sep=";")
 
+    # renomes comuns -> padroniza nomes
     ren = {}
     for c in list(u.columns):
         cn = nrm(c)
@@ -164,6 +169,7 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
         return pd.DataFrame()
     u["NORM_MUN"] = base_nome.apply(nrm)
 
+    # preferir Total/Total quando existir
     if "NO_LOCALIZACAO" in u and "NO_DEPENDENCIA" in u:
         loc = u["NO_LOCALIZACAO"].fillna("").str.upper()
         dep = u["NO_DEPENDENCIA"].fillna("").str.upper()
@@ -173,6 +179,7 @@ def ler_urgentes(path_csv: str) -> pd.DataFrame:
     else:
         u = u.drop_duplicates(subset=["NORM_MUN","NO_UF"], keep="first")
 
+    # numéricos
     num_cols = [
         "Evasao_Fundamental","Evasao_Medio",
         "TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS",
@@ -217,7 +224,7 @@ def build_data():
                  .merge(fin, on="CO_MUNICIPIO", how="left")
                  .merge(med, on="CO_MUNICIPIO", how="left"))
 
-    # Fração -> %
+    # Fração -> % (0–100)
     for c in ["TAXA_APROVACAO_INICIAIS","TAXA_APROVACAO_FINAIS","TAXA_APROVACAO_MEDIO"]:
         if c in base.columns:
             base[c + "_%"] = (base[c]*100).round(2)
@@ -269,7 +276,7 @@ def build_data():
 with st.spinner("Carregando e processando…"):
     base, evol, meta = build_data()
 
-# ====== Aba: Visão geral ======
+# ====== Aba: Visão geral / Gráficos / Tabelas / Diagnóstico ======
 tab_intro, tab_graficos, tab_tabelas, tab_diag = st.tabs(
     ["Visão geral", "Gráficos", "Tabelas", "Diagnóstico"]
 )
@@ -289,40 +296,54 @@ with tab_intro:
 with tab_graficos:
     # KPIs (fixos conforme pedido)
     c1,c2,c3,c4 = st.columns(4)
-    with c1: st.metric("Municípios presentes na pesquisa", "18")
+    with c1: st.metric("Municípios presentes na pesquisa", f"{CIDADES_PESQUISA_FIXO}")
     with c2: st.metric("Ano (Iniciais)", 2005)
     with c3: st.metric("Ano (Finais)",   2023)
     with c4: st.metric("Ano (Médio)",    2023)
 
-    st.subheader("📈 Evolução por município (aprov. %)")
-    mun_opts = sorted(base["NO_MUNICIPIO"].dropna().unique())
-    mun = st.selectbox("Escolha um município", mun_opts)
+    st.subheader("🧭 Evolução por município (aprov. %)")
+    mun = st.selectbox("Escolha um município", sorted(base["NO_MUNICIPIO"].dropna().unique()))
     suavizar = st.checkbox("Suavizar (média móvel 3 anos)", value=False)
 
     e = evol[evol["NO_MUNICIPIO"] == mun].copy()
     cols_etapas = [c for c in ["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%","APROVACAO_MEDIO_%"] if c in e]
+
+    # monta long e agrega por ano
     e_long = (e.melt(id_vars=["ANO"], value_vars=cols_etapas, var_name="Etapa", value_name="Aprovacao")
                 .dropna(subset=["Aprovacao"]))
-    e_long["Etapa"] = (e_long["Etapa"].str.replace("_%","", regex=False)
-                                     .str.replace("APROVACAO_","", regex=False)
-                                     .str.title())
-    e_long = (e_long.groupby(["Etapa","ANO"], as_index=False)["Aprovacao"].mean()
-                    .sort_values(["Etapa","ANO"]))
-
     if not e_long.empty:
+        e_long["Etapa"] = (e_long["Etapa"].str.replace("_%","", regex=False)
+                                         .str.replace("APROVACAO_","", regex=False)
+                                         .str.title())
+        e_long = (e_long.groupby(["Etapa","ANO"], as_index=False)["Aprovacao"].mean())
+        e_long = e_long.sort_values(["Etapa","ANO"])
         if suavizar:
             e_long["Aprovacao"] = (e_long
                                    .groupby("Etapa")["Aprovacao"]
                                    .transform(lambda s: s.rolling(3, min_periods=1).mean()))
         fig2 = px.line(
             e_long, x="ANO", y="Aprovacao", color="Etapa", markers=True,
-            category_orders={"ANO": sorted(e_long["ANO"].unique())},
             labels={"Aprovacao":"Aprovação (%)", "ANO":"Ano"}
         )
         fig2.update_yaxes(range=[0,100], tickformat=".0f")
         st.plotly_chart(fig2, use_container_width=True)
     else:
-        st.info("Sem série histórica disponível para este município.")
+        st.info("Sem série legível para este município. Exibindo a tendência geral do recorte.")
+
+    # Sempre mostrar o gráfico no modelo solicitado (média do recorte)
+    st.markdown("### 📊 Tendência Geral — Aprovação Iniciais vs Finais (média do recorte)")
+    geral = evol.copy()
+    serie = (geral
+             .groupby("ANO", as_index=False)[["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"]]
+             .mean(numeric_only=True))
+    serie = serie.sort_values("ANO")
+    fig_g = px.line(
+        serie.melt(id_vars="ANO", value_vars=["APROVACAO_INICIAIS_%","APROVACAO_FINAIS_%"],
+                   var_name="Etapa", value_name="Aprovação (%)"),
+        x="ANO", y="Aprovação (%)", color="Etapa", markers=True
+    )
+    fig_g.update_yaxes(range=[0,100], tickformat=".0f")
+    st.plotly_chart(fig_g, use_container_width=True)
 
 with tab_tabelas:
     st.subheader("📋 Tabela (com urgência & evasão)")
@@ -336,12 +357,11 @@ with tab_tabelas:
     show_cols = [c for c in show_cols if c in base.columns]
     tbl = base[show_cols].copy()
 
-    # NULOS -> MEDIANA da própria coluna (nunca 0)
+    # --------- preenche NaN com MEDIANA por coluna (pedido) ----------
     for c in tbl.columns:
         if pd.api.types.is_numeric_dtype(tbl[c]):
-            vals = pd.to_numeric(tbl[c], errors="coerce")
-            med = float(vals.median()) if not vals.dropna().empty else 0.0
-            tbl[c] = vals.fillna(med).round(2)
+            med = pd.to_numeric(tbl[c], errors="coerce").median(skipna=True)
+            tbl[c] = pd.to_numeric(tbl[c], errors="coerce").fillna(med).round(2)
         else:
             tbl[c] = tbl[c].astype(str).replace({"nan":"—","None":"—"}).replace("", "—")
 
