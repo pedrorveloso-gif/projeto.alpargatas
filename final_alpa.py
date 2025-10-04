@@ -287,9 +287,9 @@ with tab_intro:
 with tab_graficos:
     c1,c2,c3,c4 = st.columns(4)
     with c1: st.metric("Municípios presentes na pesquisa", f"{CIDADES_PESQUISA_FIXO}")
-    with c2: st.metric("Ano (Iniciais)", 2005--2023)
-    with c3: st.metric("Ano (Finais)",  2005--2023)
-    with c4: st.metric("Ano (Médio)",  2005--2023)
+    with c2: st.metric("Ano (Iniciais)", "2005-2023")
+    with c3: st.metric("Ano (Finais)",  "2005-2023")
+    with c4: st.metric("Ano (Médio)",  "2005-2023")
 
     st.subheader("🧭 Evolução por município (aprov. %)")
     mun = st.selectbox("Escolha um município", sorted(base["NO_MUNICIPIO"].dropna().unique()))
@@ -362,6 +362,7 @@ with tab_diag:
             st.code("\n".join([f"{a}: {c}" for a,c in sorted(mapping.items())]), language="text")
         except Exception as e:
             st.warning(f"{nome}: {e}")
+
 
 
 
